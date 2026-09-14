@@ -1,0 +1,15 @@
+{
+  "name": "subscription-management",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "app/*"
+  ],
+  "description": "> A full-stack subscription management application that helps users track recurring subscriptions, understand their spending, and avoid unwanted renewals.",
+  "directories": {
+    "doc": "docs"
+  },
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
