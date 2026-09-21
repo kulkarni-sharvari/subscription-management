@@ -6,7 +6,7 @@
 
 **Purpose:** Personal application + Full-Stack & Application Security portfolio project
 
----
+***
 
 ## Overview
 
@@ -24,7 +24,7 @@ After experiencing this repeatedly across different services, I wanted a single 
 
 The application is also being developed as a portfolio project to demonstrate the complete software development lifecycle, including **product design, UX, system design, full-stack implementation, testing, application security, CI/CD, deployment, and operational considerations**.
 
----
+***
 
 # Project Goals
 
@@ -67,7 +67,7 @@ The project will incorporate:
 * Security-focused testing
 * Security requirements derived from identified threats
 
----
+***
 
 # Product Scope
 
@@ -137,7 +137,7 @@ Additional analytics:
 
 `[TBD]`
 
----
+***
 
 # Future Scope
 
@@ -173,7 +173,7 @@ Potential functionality:
 
 Status: `Future`
 
----
+***
 
 ## Spending Intelligence
 
@@ -187,7 +187,7 @@ Potential features:
 
 Status: `Future`
 
----
+***
 
 ## Personalization
 
@@ -202,7 +202,7 @@ Potential features:
 
 Status: `Future`
 
----
+***
 
 ## Security Enhancements
 
@@ -218,7 +218,7 @@ Potential future features:
 
 Status: `Future`
 
----
+***
 
 # User Flow
 
@@ -250,7 +250,7 @@ The primary V1 workflow is:
         Active Status       Inactive Status
 ```
 
----
+***
 
 # Technology Stack
 
@@ -320,7 +320,7 @@ Specific tools:
 
 `[TBD]`
 
----
+***
 
 # Architecture Principles
 
@@ -342,7 +342,7 @@ The following decisions remain intentionally open until the technical design is 
 * Hosting/deployment architecture (frontend and Node.js API — the database and auth are already hosted via Supabase)
 * Observability tooling
 
----
+***
 
 # Security Principles
 
@@ -417,7 +417,7 @@ Secrets must:
 * Never be logged
 * Be provided through environment configuration or a managed secrets mechanism
 
----
+***
 
 # API
 
@@ -458,7 +458,7 @@ API specification:
 
 `[TBD — OpenAPI/Swagger]`
 
----
+***
 
 # Domain Model
 
@@ -484,7 +484,7 @@ AuditLog
 
 The final domain model will be determined during the requirements and system-design phase.
 
----
+***
 
 # Documentation
 
@@ -536,7 +536,7 @@ docs/
     └── disaster-recovery.md
 ```
 
----
+***
 
 # Development Workflow
 
@@ -576,7 +576,7 @@ Observability
 Security Review
 ```
 
----
+***
 
 # Quality & Security Gates
 
@@ -600,110 +600,110 @@ CI Checks
 
 before being considered complete.
 
----
+***
 
 # Development Roadmap
 
 ## Phase 0 — Product & Requirements
 
-* [X] Define V1 scope
-* [X] Write PRD
-* [ ] Define user stories
-* [ ] Define acceptance criteria
-* [ ] Define functional requirements
-* [ ] Define non-functional requirements
+* \[X] Define V1 scope
+* \[X] Write PRD
+* \[ ] Define user stories
+* \[ ] Define acceptance criteria
+* \[ ] Define functional requirements
+* \[ ] Define non-functional requirements
 
 ## Phase 1 — UX & Domain Design
 
-* [ ] Create user flows
-* [ ] Create wireframes
-* [ ] Create UX prototype
-* [X] Define domain entities — `docs/architecture/data-model.md` (User, Subscription, Billing, PaymentMethod)
-* [X] Define entity relationships — FKs documented in `data-model.md`
-* [X] Define subscription lifecycle/state transitions — `docs/product/prd.md` (state machine), `data-model.md`
+* \[ ] Create user flows
+* \[ ] Create wireframes
+* \[ ] Create UX prototype
+* \[X] Define domain entities — `docs/architecture/data-model.md` (User, Subscription, Billing, PaymentMethod)
+* \[X] Define entity relationships — FKs documented in `data-model.md`
+* \[X] Define subscription lifecycle/state transitions — `docs/product/prd.md` (state machine), `data-model.md`
 
 ## Phase 2 — Architecture
 
-* [X] Evaluate Node.js vs Next.js API — decided: Node.js, kept separate from the frontend
-* [X] Evaluate PostgreSQL vs alternatives — decided: PostgreSQL
-* [X] Define system boundaries — `docs/architecture/high-level-design.md`
-* [X] Create HLD — `docs/architecture/high-level-design.md`
-* [X] Define API architecture — `docs/architecture/api-design.md`
-* [X] Define database architecture — `docs/architecture/database-design.md`
-* [X] Define background job requirements — Supabase Cron → Node API (`docs/architecture/decisions.md`)
-* [X] Define notification architecture — Resend (`docs/architecture/decisions.md`)
-* [ ] Document major decisions as ADRs — `docs/architecture/decisions.md` is currently a running Q&A log, not yet split into formal per-decision ADR files
+* \[X] Evaluate Node.js vs Next.js API — decided: Node.js, kept separate from the frontend
+* \[X] Evaluate PostgreSQL vs alternatives — decided: PostgreSQL
+* \[X] Define system boundaries — `docs/architecture/high-level-design.md`
+* \[X] Create HLD — `docs/architecture/high-level-design.md`
+* \[X] Define API architecture — `docs/architecture/api-design.md`
+* \[X] Define database architecture — `docs/architecture/database-design.md`
+* \[X] Define background job requirements — Supabase Cron → Node API (`docs/architecture/decisions.md`)
+* \[X] Define notification architecture — Resend (`docs/architecture/decisions.md`)
+* \[ ] Document major decisions as ADRs — `docs/architecture/decisions.md` is currently a running Q\&A log, not yet split into formal per-decision ADR files
 
 ## Phase 3 — Application Security Design
 
-* [ ] Identify trust boundaries
-* [ ] Create threat model
-* [ ] Identify threats
-* [ ] Assign risk levels
-* [ ] Define security requirements
-* [ ] Define authentication approach
-* [ ] Define authorization model
-* [ ] Define data protection requirements
-* [ ] Define security testing strategy
+* \[ ] Identify trust boundaries
+* \[ ] Create threat model
+* \[ ] Identify threats
+* \[ ] Assign risk levels
+* \[ ] Define security requirements
+* \[ ] Define authentication approach
+* \[ ] Define authorization model
+* \[ ] Define data protection requirements
+* \[ ] Define security testing strategy
 
 ## Phase 4 — Low-Level Design
 
-* [X] Define backend module structure — `docs/architecture/low-level-design.md`
-* [X] Define API contracts — `docs/architecture/api-design.md`
-* [X] Define request/response schemas — `docs/architecture/api-design.md`, `docs/architecture/low-level-design.md`
-* [X] Define validation rules — `docs/architecture/low-level-design.md`
-* [X] Define error-handling strategy — `docs/architecture/low-level-design.md`
-* [X] Define database schema — `docs/architecture/database-design.md`
-* [X] Define indexes — `docs/architecture/database-design.md`
-* [X] Define transaction requirements — `docs/architecture/low-level-design.md`
-* [X] Define notification workflow — `docs/architecture/low-level-design.md`
+* \[X] Define backend module structure — `docs/architecture/low-level-design.md`
+* \[X] Define API contracts — `docs/architecture/api-design.md`
+* \[X] Define request/response schemas — `docs/architecture/api-design.md`, `docs/architecture/low-level-design.md`
+* \[X] Define validation rules — `docs/architecture/low-level-design.md`
+* \[X] Define error-handling strategy — `docs/architecture/low-level-design.md`
+* \[X] Define database schema — `docs/architecture/database-design.md`
+* \[X] Define indexes — `docs/architecture/database-design.md`
+* \[X] Define transaction requirements — `docs/architecture/low-level-design.md`
+* \[X] Define notification workflow — `docs/architecture/low-level-design.md`
 
 ## Phase 5 — Implementation
 
-* [ ] Project setup
-* [ ] Authentication
-* [ ] Subscription management
-* [ ] Dashboard
-* [ ] Analytics
-* [ ] Notifications
-* [ ] Notification preferences
+* \[ ] Project setup
+* \[ ] Authentication
+* \[ ] Subscription management
+* \[ ] Dashboard
+* \[ ] Analytics
+* \[ ] Notifications
+* \[ ] Notification preferences
 
 ## Phase 6 — Testing
 
-* [ ] Unit tests
-* [ ] Integration tests
-* [ ] API tests
-* [ ] E2E tests
-* [ ] Security tests
-* [ ] Performance testing
-* [ ] Accessibility testing
+* \[ ] Unit tests
+* \[ ] Integration tests
+* \[ ] API tests
+* \[ ] E2E tests
+* \[ ] Security tests
+* \[ ] Performance testing
+* \[ ] Accessibility testing
 
 ## Phase 7 — CI/CD & Security Automation
 
-* [ ] GitHub Actions
-* [ ] Linting
-* [ ] Type checking
-* [ ] Unit/integration tests
-* [ ] SAST
-* [ ] Dependency scanning
-* [ ] Secret scanning
-* [ ] Build
-* [ ] E2E testing
-* [ ] DAST
+* \[ ] GitHub Actions
+* \[ ] Linting
+* \[ ] Type checking
+* \[ ] Unit/integration tests
+* \[ ] SAST
+* \[ ] Dependency scanning
+* \[ ] Secret scanning
+* \[ ] Build
+* \[ ] E2E testing
+* \[ ] DAST
 
 ## Phase 8 — Deployment & Operations
 
-* [ ] Select free/student-friendly hosting
-* [ ] Deployment architecture
-* [ ] Environment configuration
-* [ ] Secrets management
-* [ ] Logging
-* [ ] Monitoring
-* [ ] Backups
-* [ ] Recovery procedures
-* [ ] Disaster recovery documentation
+* \[ ] Select free/student-friendly hosting
+* \[ ] Deployment architecture
+* \[ ] Environment configuration
+* \[ ] Secrets management
+* \[ ] Logging
+* \[ ] Monitoring
+* \[ ] Backups
+* \[ ] Recovery procedures
+* \[ ] Disaster recovery documentation
 
----
+***
 
 # Decision Log
 
@@ -713,27 +713,27 @@ Current decisions:
 
 | Decision                                    | Status    |
 | ------------------------------------------- | --------- |
-| Modular monolith                            | ✅ Decided |
-| TypeScript                                  | ✅ Decided |
-| React frontend (plain SPA, no meta-framework) | ✅ Decided |
-| Tailwind CSS                                | ✅ Decided |
-| Backend: Node.js (separate from frontend)   | ✅ Decided |
-| Database: PostgreSQL (via Supabase)          | ✅ Decided |
-| Authentication: Supabase Auth                | ✅ Decided |
-| REST API                                    | ✅ Decided |
-| Server-side authorization                   | ✅ Decided |
-| Boundary input validation                   | ✅ Decided |
-| Established security primitives             | ✅ Decided |
-| Secrets management principles               | ✅ Decided |
-| Automated testing                           | ✅ Decided |
-| Security testing in CI/CD                   | ✅ Decided |
-| Avoid unnecessary infrastructure complexity | ✅ Decided |
-| Notification provider: Resend                | ✅ Decided |
-| Background job mechanism: Supabase Cron (`pg_cron`/`pg_net`) → Node API endpoint | ✅ Decided |
-| Hosting provider                            | ⏳ Pending |
-| Observability tooling                       | ⏳ Pending |
+| Modular monolith                            | Decided |
+| TypeScript                                  |Decided |
+| React frontend (plain SPA, no meta-framework) |Decided |
+| Tailwind CSS                                |Decided |
+| Backend: Node.js (separate from frontend)   |Decided |
+| Database: PostgreSQL (via Supabase)          |Decided |
+| Authentication: Supabase Auth                |Decided |
+| REST API                                    |Decided |
+| Server-side authorization                   |Decided |
+| Boundary input validation                   |Decided |
+| Established security primitives             |Decided |
+| Secrets management principles               |Decided |
+| Automated testing                           |Decided |
+| Security testing in CI/CD                   |Decided |
+| Avoid unnecessary infrastructure complexity |Decided |
+| Notification provider: Resend                |Decided |
+| Background job mechanism: Supabase Cron (`pg_cron`/`pg_net`) → Node API endpoint |Decided |
+| Hosting provider                            | Pending |
+| Observability tooling                       |Pending |
 
----
+***
 
 # Screenshots & Demo
 
@@ -759,7 +759,7 @@ Screenshots and a live demo will be added as the application develops.
 
 `[URL TBD]`
 
----
+***
 
 # Testing
 
@@ -779,7 +779,7 @@ Coverage target:
 
 `[TBD]`
 
----
+***
 
 # Deployment
 
@@ -795,13 +795,13 @@ Deployment documentation:
 
 `docs/operations/deployment.md`
 
----
+***
 
 # Credits
 
 External libraries, frameworks, tutorials, documentation, and other resources used during development will be credited here.
 
----
+***
 
 # License
 
