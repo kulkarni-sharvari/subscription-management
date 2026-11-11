@@ -6,3 +6,5 @@ build/
 *.log
 .DS_Store
 node_modules
+# Working tickets, not versioned
+jira ticket/
