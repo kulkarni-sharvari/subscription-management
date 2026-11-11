@@ -11,5 +11,8 @@
   },
   "author": "",
   "license": "ISC",
-  "type": "commonjs"
+  "type": "commonjs",
+  "devDependencies": {
+    "typescript": "~6.0.3"
+  }
 }

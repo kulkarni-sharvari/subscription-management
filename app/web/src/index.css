@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+/*
+  Central design template. Change the look of the whole app here:
+    1. @theme       design tokens (colours, fonts, radius). Tailwind turns each into utility classes.
+    2. @layer components   named building blocks (.btn, .input, .card ...) that pages use.
+  Pages and components should use these names, not long strings of utility classes.
+*/
+
+@theme {
+  /* System fonts: nothing to download, nothing sent to a third party. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Brand */
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+
+  /* Neutrals */
+  --color-page: #f8fafc;
+  --color-surface: #ffffff;
+  --color-ink: #0f172a;
+  --color-ink-muted: #475569;
+  --color-line: #cbd5e1;
+
+  /* Feedback */
+  --color-danger-50: #fef2f2;
+  --color-danger-600: #dc2626;
+  --color-danger-700: #b91c1c;
+  --color-success-50: #f0fdf4;
+  --color-success-700: #15803d;
+
+  --radius-control: 0.5rem;
+  --radius-card: 0.75rem;
+}
+
+@layer base {
+  body {
+    @apply bg-page font-sans text-ink antialiased;
+  }
+}
+
+@layer components {
+  /* Layout */
+  .page-center {
+    @apply flex min-h-screen items-center justify-center px-4 py-10;
+  }
+  .card {
+    @apply w-full max-w-md rounded-card border border-line bg-surface p-8 shadow-sm;
+  }
+  .stack {
+    @apply flex flex-col gap-5;
+  }
+
+  /* Text */
+  .heading {
+    @apply text-2xl font-semibold tracking-tight;
+  }
+  .muted {
+    @apply text-sm text-ink-muted;
+  }
+  .link {
+    @apply font-medium text-brand-600 underline-offset-2 hover:text-brand-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500;
+  }
+
+  /* Forms */
+  .field {
+    @apply flex flex-col gap-1.5;
+  }
+  .label {
+    @apply text-sm font-medium;
+  }
+  .input {
+    @apply w-full rounded-control border border-line bg-surface px-3 py-2 text-base shadow-sm placeholder:text-ink-muted/60 focus-visible:border-brand-500 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-brand-500 disabled:cursor-not-allowed disabled:opacity-60 aria-[invalid=true]:border-danger-600;
+  }
+  .field-error {
+    @apply text-sm text-danger-700;
+  }
+
+  /* Buttons */
+  .btn-primary,
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-control px-4 py-2 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-primary {
+    @apply bg-brand-600 text-white hover:bg-brand-700;
+  }
+  .btn-secondary {
+    @apply border border-line bg-surface text-ink hover:bg-brand-50;
+  }
+
+  /* Messages */
+  .alert-error,
+  .alert-success {
+    @apply rounded-control border px-3 py-2 text-sm;
+  }
+  .alert-error {
+    @apply border-danger-600/30 bg-danger-50 text-danger-700;
+  }
+  .alert-success {
+    @apply border-success-700/30 bg-success-50 text-success-700;
+  }
+
+  /* App shell */
+  .app-header {
+    @apply flex items-center justify-between border-b border-line bg-surface px-6 py-3;
+  }
+  .app-main {
+    @apply mx-auto w-full max-w-5xl px-6 py-8;
+  }
+}

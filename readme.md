@@ -432,9 +432,11 @@ The API versioning strategy will initially use:
 Planned resources:
 
 ```text
+/api/v1/payment-methods
 /api/v1/subscriptions
 /api/v1/analytics
-/api/v1/notifications
+/api/v1/account
+/api/v1/imports        (V1.1)
 ```
 
 Login, logout, and registration are handled by Supabase Auth directly from the frontend and are **not** Node.js API endpoints — the API's role is verifying the resulting token on every request, not issuing or managing sessions itself.
@@ -446,13 +448,15 @@ GET    /api/v1/subscriptions
 POST   /api/v1/subscriptions
 GET    /api/v1/subscriptions/:id
 PATCH  /api/v1/subscriptions/:id
-DELETE /api/v1/subscriptions/:id
+POST   /api/v1/subscriptions/:id/renew
 
 GET    /api/v1/analytics/spending
 
-GET    /api/v1/notifications/preferences
-PATCH  /api/v1/notifications/preferences
+POST   /api/v1/account/delete
+POST   /api/v1/imports          (V1.1)
 ```
+
+There is no `DELETE` on subscriptions (FR-040) and no notification-preferences endpoint in V1. The authoritative contracts are in `docs/architecture/api-design.md`.
 
 API specification:
 
