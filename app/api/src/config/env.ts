@@ -10,6 +10,8 @@ const configSchema = z.object({
   // Must be the app_user (least-privilege) connection string, not the admin one.
   DATABASE_URL: z.string().min(1),
   SUPABASE_URL: z.url(),
+  // Supabase "publishable" (anon) key. Safe to ship in a browser app; never the service-role key.
+  SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
   // Exact origin of the React app, used for CORS.
   CORS_ORIGIN: z.string().min(1),
 });

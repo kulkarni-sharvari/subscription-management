@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { z } from "zod";
 import { UnauthorizedError } from "../errors.js";
+import type { SessionCookies } from "../session/cookies.js";
 
 // Makes `req.userId` known to TypeScript. Set only by createAuth, from the verified token's `sub`.
 declare module "express-serve-static-core" {
@@ -11,6 +12,8 @@ declare module "express-serve-static-core" {
 }
 
 export interface AuthDeps {
+    // Reads the access token from its httpOnly cookie (session/cookies.ts).
+    cookies: SessionCookies;
     // Returns the user id (`sub`) of a valid token. Any problem with the token must throw.
     verifyToken: (token: string) => Promise<string>;
     // True if the account still has a profiles row (SEC-068).
@@ -19,14 +22,15 @@ export interface AuthDeps {
 
 // Authenticates every request behind it (FR-004, FR-005, SEC-021, SEC-068).
 // The user id is taken only from the verified token, never from the body, query or a header.
-export function createAuth({ verifyToken, profileExists }: AuthDeps): RequestHandler {
+export function createAuth({ cookies, verifyToken, profileExists }: AuthDeps): RequestHandler {
     return async (req, _res, next) => {
-        const match = /^Bearer (\S+)$/i.exec(req.get("authorization") ?? "");
-        if (!match) throw new UnauthorizedError();
+        // The token comes only from the session cookie; an Authorization header is ignored.
+        const token = cookies.read(req, cookies.names.access);
+        if (!token) throw new UnauthorizedError();
 
         // However verification fails (expired, tampered, wrong audience, key fetch...), the client
         // gets the same bare 401, so it never learns which check failed (SEC-021).
-        const userId = await verifyToken(match[1]).catch(() => {
+        const userId = await verifyToken(token).catch(() => {
             throw new UnauthorizedError();
         });
 

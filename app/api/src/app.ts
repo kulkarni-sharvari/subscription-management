@@ -1,20 +1,27 @@
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import express, { type RequestHandler } from "express";
 import helmet from "helmet";
 import { NotFoundError } from "./errors.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { requireSameOrigin } from "./middleware/sameOrigin.js";
+import { createAuthRouter } from "./routes/auth.js";
 import { createMeRouter } from "./routes/me.js";
+import type { AuthService } from "./services/authService.js";
 import type { ProfileService } from "./services/profileService.js";
+import type { SessionCookies } from "./session/cookies.js";
 
 export interface AppDeps {
     corsOrigin: string;
-    // Authenticates every /api/v1 request (middleware/auth.ts).
+    // Authenticates every /api/v1 request except /auth (middleware/auth.ts).
     auth: RequestHandler;
+    authService: AuthService;
+    sessionCookies: SessionCookies;
     profileService: ProfileService;
 }
 
 // Builds the Express app without starting it, so tests can drive it through supertest
-export function createApp({ corsOrigin, auth, profileService }: AppDeps) {
+export function createApp({ corsOrigin, auth, authService, sessionCookies, profileService }: AppDeps) {
     const app = express();
 
     // should be disabled because it facilitates information disclosure, allowing attackers to easily identify the specific framework (e.g., Express, PHP, ASP.NET) and often the version of your server software.  This disclosure significantly reduces the effort required for reconnaissance and fingerprinting
@@ -22,7 +29,9 @@ export function createApp({ corsOrigin, auth, profileService }: AppDeps) {
     // Security response headers (nosniff, frame protections, HSTS, and so on).
     app.use(helmet());
     // Browser calls are allowed from the React app's exact origin only (CORS_ORIGIN), never "*".
-    app.use(cors({ origin: corsOrigin }));
+    // credentials: the session cookie may be sent, which is only allowed with an exact origin.
+    app.use(cors({ origin: corsOrigin, credentials: true }));
+    app.use(cookieParser());
     // Bodies are small JSON; the cap rejects oversized payloads (413) before any parsing work.
     app.use(express.json({ limit: "100kb" }));
 
@@ -31,10 +40,19 @@ export function createApp({ corsOrigin, auth, profileService }: AppDeps) {
         res.json({ status: "OK" });
     });
 
-    // Everything under /api/v1 requires a valid token, so a route added here cannot forget auth.
-    // Routes are mounted on `api` as each story adds them. (/internal/jobs will use its own secret
-    // check and sit outside this router.)
+    // Responses hold personal data and session cookies: browsers and proxies must not cache them.
+    app.use("/api", (_req, res, next) => {
+        res.set("Cache-Control", "no-store");
+        next();
+    });
+
+    // Everything under /api/v1 below `auth` requires a valid token, so a route added there cannot
+    // forget auth. Only /auth, which signs people in, is mounted above it. (/internal/jobs will use
+    // its own secret check and sit outside this router.)
     const api = express.Router();
+    // CSRF check for every state-changing request, before anything else runs.
+    api.use(requireSameOrigin(corsOrigin));
+    api.use("/auth", createAuthRouter(authService, sessionCookies));
     api.use(auth);
     api.use("/me", createMeRouter(profileService));
     app.use("/api/v1", api);

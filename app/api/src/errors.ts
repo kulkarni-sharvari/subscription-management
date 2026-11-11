@@ -26,3 +26,9 @@ export class NotFoundError extends AppError {
         super(404, "NOT_FOUND", "Not found")
     }
 }
+
+export class ForbiddenError extends AppError {
+    constructor(){
+        super(403, "FORBIDDEN", "Forbidden")
+    }
+}
