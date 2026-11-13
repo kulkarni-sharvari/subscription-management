@@ -14,6 +14,13 @@ const configSchema = z.object({
   SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
   // Exact origin of the React app, used for CORS.
   CORS_ORIGIN: z.string().min(1),
+  // Resend (transactional email). EMAIL_FROM must be on a domain verified in Resend, or
+  // "Subscription Manager <onboarding@resend.dev>" while testing.
+  RESEND_API_KEY: z.string().min(1),
+  EMAIL_FROM: z.string().min(1),
+  // How many reverse proxies sit in front of the API (0 = none, as in development). Rate limits
+  // are counted per client address, which is only correct if the API knows how many hops to skip.
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
 });
 
 export type Env = z.infer<typeof configSchema>;

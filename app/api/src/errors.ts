@@ -32,3 +32,16 @@ export class ForbiddenError extends AppError {
         super(403, "FORBIDDEN", "Forbidden")
     }
 }
+
+export class RateLimitedError extends AppError {
+    constructor(){
+        super(429, "RATE_LIMITED", "Too many requests. Try again later")
+    }
+}
+
+// The API is healthy but cannot get a database connection in time (the pool is exhausted).
+export class ServiceUnavailableError extends AppError {
+    constructor(){
+        super(503, "SERVICE_UNAVAILABLE", "The service is busy. Try again in a moment")
+    }
+}
