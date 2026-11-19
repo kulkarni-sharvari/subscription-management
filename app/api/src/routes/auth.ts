@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
-import { UnauthorizedError, ValidationError } from "../errors.js";
+import { UnauthorizedError } from "../errors.js";
+import type { RateLimiters } from "../middleware/rateLimit.js";
 import type { AuthService } from "../services/authService.js";
+import { parse } from "../validation.js";
 import type { SessionCookies } from "../session/cookies.js";
 
 // Trimmed and lower-cased so "Ann@x.com " and "ann@x.com" are the same account.
@@ -31,42 +33,33 @@ const confirmBody = z.object({
     tokenHash: z.string("Invalid confirmation link").min(1, "Invalid confirmation link").max(512),
 });
 
-function parse<T extends z.ZodType>(schema: T, body: unknown): z.infer<T> {
-    const result = schema.safeParse(body);
-    if (!result.success) {
-        const issue = result.error.issues[0];
-        throw new ValidationError(issue.message, issue.path.join(".") || undefined);
-    }
-    return result.data;
-}
-
 // /api/v1/auth/*: the only place the browser signs in. Public (no token needed), so the router
 // is mounted before the auth middleware. Tokens only ever travel in httpOnly cookies.
-export function createAuthRouter(auth: AuthService, cookies: SessionCookies) {
+export function createAuthRouter(auth: AuthService, cookies: SessionCookies, limiters: RateLimiters) {
     const router = Router();
 
     // Sign-up answers are the same for new and existing emails (SEC-024).
-    router.post("/register", async (req, res) => {
+    router.post("/register", limiters.register, async (req, res) => {
         const { email, password } = parse(registerBody, req.body);
         await auth.register(email, password);
         res.status(202).json({ message: "Check your email to confirm your account" });
     });
 
-    router.post("/login", async (req, res) => {
+    router.post("/login", limiters.login, async (req, res) => {
         const { email, password } = parse(loginBody, req.body);
         cookies.set(res, await auth.login(email, password));
         res.status(204).end();
     });
 
     // The confirmation email links to the React app, which posts the token from the link here.
-    router.post("/confirm", async (req, res) => {
+    router.post("/confirm", limiters.session, async (req, res) => {
         const { tokenHash } = parse(confirmBody, req.body);
         cookies.set(res, await auth.confirmEmail(tokenHash));
         res.status(204).end();
     });
 
     // Trades the refresh cookie for a new pair of cookies (Supabase rotates the refresh token).
-    router.post("/refresh", async (req, res) => {
+    router.post("/refresh", limiters.session, async (req, res) => {
         const refreshToken = cookies.read(req, cookies.names.refresh);
         if (!refreshToken) throw new UnauthorizedError();
         try {

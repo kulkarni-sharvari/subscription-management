@@ -16,6 +16,8 @@ const validEnv = {
     SUPABASE_URL: "https://testref.supabase.co",
     SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
     CORS_ORIGIN: "http://localhost:3000",
+    RESEND_API_KEY: "re_test",
+    EMAIL_FROM: "Subscription Manager <onboarding@resend.dev>",
 };
 
 function sourceFiles(dir: string): string[] {
@@ -38,13 +40,21 @@ describe("SEC-019: configuration fails closed and never prints values", () => {
         expect(loadEnv(validEnv).PORT).toBe(4000);
     });
 
-    it.each(["DATABASE_URL", "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "CORS_ORIGIN"])(
+    it.each(["DATABASE_URL", "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "CORS_ORIGIN", "RESEND_API_KEY", "EMAIL_FROM"])(
         "refuses to start without %s, and the error names the setting only",
         (name) => {
             const env: Record<string, string | undefined> = { ...validEnv, [name]: undefined };
             expect(() => loadEnv(env)).toThrow(`Invalid configuration: ${name}`);
         },
     );
+
+    it("rejects a malformed proxy hop count and defaults to none", () => {
+        expect(loadEnv(validEnv).TRUST_PROXY_HOPS).toBe(0);
+        expect(loadEnv({ ...validEnv, TRUST_PROXY_HOPS: "1" }).TRUST_PROXY_HOPS).toBe(1);
+        for (const bad of ["-1", "abc", "99", "1.5"]) {
+            expect(() => loadEnv({ ...validEnv, TRUST_PROXY_HOPS: bad }), bad).toThrow("Invalid configuration: TRUST_PROXY_HOPS");
+        }
+    });
 
     it("does not put secret values in the error message", () => {
         const env = { ...validEnv, SUPABASE_URL: "not-a-url", DATABASE_URL: "postgresql://u:very-secret-pw@h/db" };

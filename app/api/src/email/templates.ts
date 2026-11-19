@@ -1,0 +1,66 @@
+import type { SubscriptionDetail } from "../repositories/subscriptionRepository.js";
+
+// Makes text safe to place inside HTML. Every value that came from a user goes through this
+// before it enters an email body (SEC-047): a name like <img onerror=...> must arrive as text.
+export function escapeHtml(value: string): string {
+    return value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+const PERIOD_LABEL = { monthly: "Monthly", "6_months": "Every 6 months", annually: "Annually" } as const;
+const METHOD_LABEL = { credit_card: "Credit card", debit_card: "Debit card", apple_pay: "Apple Pay" } as const;
+
+export interface EmailContent {
+    subject: string;
+    html: string;
+    text: string;
+}
+
+export const MAX_LISTED = 20;
+
+// The rows describing one subscription.
+function detailRows(sub: SubscriptionDetail): Array<[string, string]> {
+    const period = sub.billingPeriod ? PERIOD_LABEL[sub.billingPeriod] : "One-time purchase";
+    const rows: Array<[string, string]> = [
+        ["Name", sub.name],
+        ["Category", sub.category],
+        ["Cost", sub.cost.toFixed(2)],
+        ["Billing", period],
+        ["Start date", sub.startDate],
+        [sub.billingPeriod ? "Next renewal" : "Due", sub.currentCycle?.dueDate ?? ""],
+        ["Payment method", METHOD_LABEL[sub.paymentMethod.type]],
+    ];
+    if (sub.renewalLink) rows.push(["Renewal link", sub.renewalLink]);
+    if (sub.cancellationLink) rows.push(["Cancellation link", sub.cancellationLink]);
+    return rows;
+}
+
+const htmlTable = (rows: Array<[string, string]>) =>
+    `<table>` +
+    rows.map(([label, value]) => `<tr><td><strong>${escapeHtml(label)}</strong></td><td>${escapeHtml(value)}</td></tr>`).join("") +
+    `</table>`;
+
+// The "subscription added" email (FR-013): one email per user action, however many subscriptions
+// that action created. A manual add sends one subscription; an import sends many in one message.
+export function subscriptionsAddedEmail(subs: SubscriptionDetail[]): EmailContent {
+    if (subs.length === 0) throw new Error("no subscriptions to describe");
+    const listed = subs.slice(0, MAX_LISTED);
+    const omitted = subs.length - listed.length;
+
+    // The subject has no line breaks to inject: names are validated to contain no control characters.
+    const subject = subs.length === 1 ? `Subscription added: ${subs[0].name}` : `${subs.length} subscriptions added`;
+    const intro = subs.length === 1 ? "Your subscription was added." : `${subs.length} subscriptions were added.`;
+    const more = omitted > 0 ? `...and ${omitted} more. Open the app to see them all.` : "";
+
+    const html = `<p>${intro}</p>` + listed.map((sub) => htmlTable(detailRows(sub))).join("<br>") + (more ? `<p>${escapeHtml(more)}</p>` : "");
+    const text = [
+        intro,
+        ...listed.flatMap((sub) => ["", ...detailRows(sub).map(([label, value]) => `${label}: ${value}`)]),
+        ...(more ? ["", more] : []),
+    ].join("\n");
+    return { subject, html, text };
+}

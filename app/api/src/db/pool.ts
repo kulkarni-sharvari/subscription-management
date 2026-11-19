@@ -1,18 +1,33 @@
 import pg from "pg";
 import { z } from "zod";
+import { ServiceUnavailableError } from "../errors.js";
 
+// A DATE column is a calendar day, not a moment. The driver's default turns it into a Date at
+// local midnight, which shifts the day when the server's time zone changes. Keep it as the
+// 'YYYY-MM-DD' text the database sends.
+pg.types.setTypeParser(pg.types.builtins.DATE, (value) => value);
 
-// One pool shared by every request: connections are opened once and lent out, not opened per request.
-export function createPool(connectionString: string): pg.Pool {
-    const pool = new pg.Pool({ connectionString, max: 10 });
-    // An idle connection can drop (for example when the database restarts). Without a listener that event is an unhandled 'error' and crashes the process. Log the message only: the full error object can carry connection details.
+export function createPool(
+    connectionString: string,
+    options: { max?: number; connectionTimeoutMillis?: number } = {},
+): pg.Pool {
+    const pool = new pg.Pool({
+        connectionString,
+        max: options.max ?? 10,
+        // When all connections are busy a request waits for one. Without a limit the queue grows
+        // without bound and every request gets slower; with it, a request that waits too long fails
+        // fast with a 503 and the API stays responsive.
+        connectionTimeoutMillis: options.connectionTimeoutMillis ?? 5000,
+        // Connections idle for this long are closed, so a quiet server does not hold database slots.
+        idleTimeoutMillis: 30_000,
+    });
     pool.on("error", (err) => {
         console.error("idle database client error", err.message);
     });
     return pool;
 }
 
-/* Your database has a rule (the RLS policy): "app_user may see only the row whose id equals app.user_id." But the API connects as one login for everybody, so the database has no idea who the current user is. This function tells it, safely, for the length of one request, and then forgets.
+/* The database has a rule (the RLS policy): "app_user may see only the row whose id equals app.user_id." But the API connects as one login for everybody, so the database has no idea who the current user is. This function tells it, safely, for the length of one request, and then forgets.
 
 pool: pg.Pool,   the shared set of database connections.
 userId: string,  who this request is for. Comes from JWT
@@ -28,7 +43,14 @@ export async function withUserContext<T>(
     // userId comes from the verified token's `sub`validating the token
     z.uuid().parse(userId);
 
-    const client = await pool.connect();
+    let client: pg.PoolClient;
+    try {
+        client = await pool.connect();
+    } catch (err) {
+        // Pool exhausted for too long, or the database is unreachable: either way the API cannot serve this request right now.
+        console.error("could not get a database connection:", err instanceof Error ? err.message : err);
+        throw new ServiceUnavailableError();
+    }
     let discardClient = false;
     try {
         // Starts a Transaction

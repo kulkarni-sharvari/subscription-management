@@ -5,7 +5,17 @@ import { vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { AppError } from "../src/errors.js";
 import { createAuth, createTokenVerifier } from "../src/middleware/auth.js";
+import { createRateLimiters, type RateLimitConfig } from "../src/middleware/rateLimit.js";
+import { createPaymentMethodRepository } from "../src/repositories/paymentMethodRepository.js";
+import { createProfileRepository } from "../src/repositories/profileRepository.js";
+import { createSubscriptionRepository } from "../src/repositories/subscriptionRepository.js";
 import type { AuthService } from "../src/services/authService.js";
+import { createNotificationService } from "../src/services/notificationService.js";
+import { createPaymentMethodService } from "../src/services/paymentMethodService.js";
+import { createProfileService } from "../src/services/profileService.js";
+import { createSubscriptionService } from "../src/services/subscriptionService.js";
+import type { EmailMessage } from "../src/services/emailService.js";
+import type { Db } from "./dbHelpers.js";
 import { createSessionCookies } from "../src/session/cookies.js";
 
 export const ORIGIN = "http://localhost:3000";
@@ -67,28 +77,70 @@ export function createFakeAuthService(overrides: Partial<AuthService> = {}) {
     return service satisfies AuthService;
 }
 
+const unlimited = { limit: 1_000_000, windowMs: 60_000 };
+// Limits so high that tests never meet them by accident; rate-limit tests pass their own.
+export const NO_LIMITS: RateLimitConfig = { perUser: unlimited, writes: unlimited, login: unlimited, register: unlimited, session: unlimited };
+
 interface BuildOptions {
     keys: TestKeys;
     production?: boolean;
     authService?: Partial<AuthService>;
     profileExists?: (userId: string) => Promise<boolean>;
+    limits?: RateLimitConfig;
 }
 
 // The real app, real auth middleware and real token verifier; only the outside world is faked.
-export function buildTestApp({ keys, production = false, authService, profileExists }: BuildOptions) {
+export function buildTestApp({ keys, production = false, authService, profileExists, limits = NO_LIMITS }: BuildOptions) {
     const cookies = createSessionCookies(production);
     const service = createFakeAuthService(authService);
     const getProfile = vi.fn(async (id: string) => ({ id, email: "me@example.com", createdAt: new Date("2026-01-01T00:00:00.000Z") }));
+    const paymentMethodService = {
+        create: vi.fn(async () => ({ id: USER_ID, type: "credit_card" as const, isActive: true, createdAt: new Date() })),
+        list: vi.fn(async () => []),
+    };
+    const subscriptionService = { create: vi.fn(async () => ({}) as never), list: vi.fn(async () => []) };
     const app = createApp({
         corsOrigin: ORIGIN,
         sessionCookies: cookies,
         authService: service,
         profileService: { getProfile },
+        paymentMethodService,
+        subscriptionService,
+        limiters: createRateLimiters(limits),
+        trustProxyHops: 0,
         auth: createAuth({
             cookies,
             verifyToken: createTokenVerifier(SUPABASE_URL, keys.jwks),
             profileExists: profileExists ?? (async () => true),
         }),
     });
-    return { app, service, getProfile, cookies };
+    return { app, service, getProfile, cookies, paymentMethodService, subscriptionService };
+}
+
+// The same app, but with the real repositories and services on the local database. Only the
+// email provider is replaced by a spy, so tests can see what would be sent and to whom.
+export function buildDbTestApp({ keys, db, limits = NO_LIMITS, sendEmail }: { keys: TestKeys; db: Db; limits?: RateLimitConfig; sendEmail?: (m: EmailMessage) => Promise<void> }) {
+    const cookies = createSessionCookies(false);
+    const profiles = createProfileRepository(db.app);
+    const email = vi.fn(sendEmail ?? (async () => {}));
+    const app = createApp({
+        corsOrigin: ORIGIN,
+        sessionCookies: cookies,
+        authService: createFakeAuthService(),
+        profileService: createProfileService(profiles),
+        paymentMethodService: createPaymentMethodService(createPaymentMethodRepository(db.app)),
+        subscriptionService: createSubscriptionService({
+            subscriptions: createSubscriptionRepository(db.app),
+            notifications: createNotificationService({ profiles, email: { send: email } }),
+        }),
+        limiters: createRateLimiters(limits),
+        trustProxyHops: 0,
+        auth: createAuth({ cookies, verifyToken: createTokenVerifier(SUPABASE_URL, keys.jwks), profileExists: profiles.exists }),
+    });
+    return { app, email };
+}
+
+// A session cookie for a user id, signed by the test key.
+export async function sessionCookie(keys: TestKeys, userId: string): Promise<string> {
+    return `sm_access=${await signToken(keys.privateKey, { sub: userId })}`;
 }

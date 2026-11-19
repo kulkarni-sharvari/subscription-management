@@ -6,7 +6,14 @@ import { createPool } from "./db/pool.js";
 import { createAuth, createTokenVerifier } from "./middleware/auth.js";
 import { createSessionCookies } from "./session/cookies.js";
 import { createAuthService } from "./services/authService.js";
+import { createRateLimiters } from "./middleware/rateLimit.js";
+import { createPaymentMethodRepository } from "./repositories/paymentMethodRepository.js";
 import { createProfileRepository } from "./repositories/profileRepository.js";
+import { createSubscriptionRepository } from "./repositories/subscriptionRepository.js";
+import { createEmailService } from "./services/emailService.js";
+import { createNotificationService } from "./services/notificationService.js";
+import { createPaymentMethodService } from "./services/paymentMethodService.js";
+import { createSubscriptionService } from "./services/subscriptionService.js";
 import { createProfileService } from "./services/profileService.js";
 
 // Throws at startup if configuration is missing or invalid, so the server never runs half-configured.
@@ -29,6 +36,16 @@ const app = createApp({
         profileExists: profiles.exists,
     }),
     profileService: createProfileService(profiles),
+    paymentMethodService: createPaymentMethodService(createPaymentMethodRepository(pool)),
+    subscriptionService: createSubscriptionService({
+        subscriptions: createSubscriptionRepository(pool),
+        notifications: createNotificationService({
+            profiles,
+            email: createEmailService({ apiKey: env.RESEND_API_KEY, from: env.EMAIL_FROM }),
+        }),
+    }),
+    limiters: createRateLimiters(),
+    trustProxyHops: env.TRUST_PROXY_HOPS,
 });
 
 const server = app.listen(env.PORT, () => {
