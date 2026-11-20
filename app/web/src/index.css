@@ -110,4 +110,31 @@
   .app-main {
     @apply mx-auto w-full max-w-5xl px-6 py-8;
   }
+
+  /* Subscription screens */
+  .page-actions {
+    @apply flex items-center justify-between gap-4;
+  }
+  .form-card {
+    @apply w-full max-w-xl rounded-card border border-line bg-surface p-8 shadow-sm;
+  }
+  .radio-group {
+    @apply flex flex-wrap gap-x-6 gap-y-2;
+  }
+  .radio-row,
+  .check-row {
+    @apply flex items-center gap-2 text-sm;
+  }
+  .sub-list {
+    @apply flex flex-col gap-3;
+  }
+  .sub-row {
+    @apply flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-card border border-line bg-surface px-5 py-4 shadow-sm;
+  }
+  .badge {
+    @apply inline-flex rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700;
+  }
+  .empty-state {
+    @apply rounded-card border border-dashed border-line bg-surface px-6 py-10 text-center;
+  }
 }
