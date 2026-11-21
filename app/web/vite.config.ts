@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
@@ -12,5 +13,9 @@ export default defineConfig({
     // The browser calls /api on this same origin and Vite forwards it to the API. Same origin means
     // the SameSite=Strict session cookies work with no CORS in the way, as they will in production.
     proxy: { '/api': 'http://localhost:4000' },
+  },
+  // UI tests render components in a simulated browser (jsdom); the API is replaced by a fake fetch.
+  test: {
+    environment: 'jsdom',
   },
 })
