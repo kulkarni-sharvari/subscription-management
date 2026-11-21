@@ -72,16 +72,16 @@ describe("one email per user action, however many subscriptions it added", () =>
 
     it("sends exactly one message for a batch, to one recipient", async () => {
         const email = { send: vi.fn(async (_message: EmailMessage) => {}) };
-        const profiles = { findById: async (id: string) => ({ id, email: `${id}@example.com`, createdAt: new Date() }) };
-        await createNotificationService({ profiles, email }).subscriptionsAdded("user-a", [subscription(), subscription({ name: "Spotify" })]);
+        const profiles = { findById: async (id: string) => ({ id, email: `${id}@example.com`, timeZone: "UTC", createdAt: new Date() }) };
+        await createNotificationService({ profiles, email, reserveSlot: async () => true }).subscriptionsAdded("user-a", [subscription(), subscription({ name: "Spotify" })]);
         expect(email.send).toHaveBeenCalledTimes(1);
         expect(email.send.mock.calls[0][0].to).toBe("user-a@example.com");
     });
 
     it("sends nothing for an empty batch", async () => {
         const email = { send: vi.fn(async () => {}) };
-        const profiles = { findById: async (id: string) => ({ id, email: "a@example.com", createdAt: new Date() }) };
-        await createNotificationService({ profiles, email }).subscriptionsAdded("user-a", []);
+        const profiles = { findById: async (id: string) => ({ id, email: "a@example.com", timeZone: "UTC", createdAt: new Date() }) };
+        await createNotificationService({ profiles, email, reserveSlot: async () => true }).subscriptionsAdded("user-a", []);
         expect(email.send).not.toHaveBeenCalled();
     });
 
@@ -94,8 +94,8 @@ describe("one email per user action, however many subscriptions it added", () =>
 describe("SEC-045: one message, one recipient, resolved from the same user id", () => {
     it("sends to the address of the user the subscription belongs to, and no one else", async () => {
         const email = { send: vi.fn(async (_message: EmailMessage) => {}) };
-        const profiles = { findById: vi.fn(async (id: string) => ({ id, email: `${id}@example.com`, createdAt: new Date() })) };
-        await createNotificationService({ profiles, email }).subscriptionsAdded("user-a", [subscription()]);
+        const profiles = { findById: vi.fn(async (id: string) => ({ id, email: `${id}@example.com`, timeZone: "UTC", createdAt: new Date() })) };
+        await createNotificationService({ profiles, email, reserveSlot: async () => true }).subscriptionsAdded("user-a", [subscription()]);
         expect(profiles.findById).toHaveBeenCalledWith("user-a");
         expect(email.send).toHaveBeenCalledTimes(1);
         expect(email.send.mock.calls[0][0].to).toBe("user-a@example.com");
@@ -104,7 +104,7 @@ describe("SEC-045: one message, one recipient, resolved from the same user id", 
 
     it("sends nothing when the account no longer exists", async () => {
         const email = { send: vi.fn(async () => {}) };
-        await createNotificationService({ profiles: { findById: async () => null }, email }).subscriptionsAdded("gone", [subscription()]);
+        await createNotificationService({ profiles: { findById: async () => null }, email, reserveSlot: async () => true }).subscriptionsAdded("gone", [subscription()]);
         expect(email.send).not.toHaveBeenCalled();
     });
 });

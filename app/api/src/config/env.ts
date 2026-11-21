@@ -21,6 +21,12 @@ const configSchema = z.object({
   // How many reverse proxies sit in front of the API (0 = none, as in development). Rate limits
   // are counted per client address, which is only correct if the API knows how many hops to skip.
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+  // Connection string of the job_runner role (migrations/003_reminders.sql), used only by the
+  // scheduled jobs. Not app_user and not the admin role.
+  JOB_DATABASE_URL: z.string().min(1),
+  // Shared secret Supabase Cron sends in X-Internal-Job-Secret (SEC-016): at least 32 random bytes,
+  // which is 43 characters in base64url.
+  INTERNAL_JOB_SECRET: z.string().min(43),
 });
 
 export type Env = z.infer<typeof configSchema>;

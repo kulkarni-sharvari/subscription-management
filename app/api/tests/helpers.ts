@@ -10,7 +10,10 @@ import { createPaymentMethodRepository } from "../src/repositories/paymentMethod
 import { createProfileRepository } from "../src/repositories/profileRepository.js";
 import { createSubscriptionRepository } from "../src/repositories/subscriptionRepository.js";
 import type { AuthService } from "../src/services/authService.js";
-import { createNotificationService } from "../src/services/notificationService.js";
+import { createNotificationService, EMAIL_DAILY_CAP } from "../src/services/notificationService.js";
+import { withUserContext } from "../src/db/pool.js";
+import { createSendRemindersJob } from "../src/jobs/sendReminders.js";
+import { reserveEmailSlot } from "../src/repositories/notificationLogRepository.js";
 import { createPaymentMethodService } from "../src/services/paymentMethodService.js";
 import { createProfileService } from "../src/services/profileService.js";
 import { createSubscriptionService } from "../src/services/subscriptionService.js";
@@ -79,7 +82,12 @@ export function createFakeAuthService(overrides: Partial<AuthService> = {}) {
 
 const unlimited = { limit: 1_000_000, windowMs: 60_000 };
 // Limits so high that tests never meet them by accident; rate-limit tests pass their own.
-export const NO_LIMITS: RateLimitConfig = { perUser: unlimited, writes: unlimited, login: unlimited, register: unlimited, session: unlimited };
+export const NO_LIMITS: RateLimitConfig = {
+    perUser: unlimited, writes: unlimited, login: unlimited, register: unlimited, session: unlimited, jobAuthFailures: unlimited,
+};
+
+// A job secret for tests: 43 characters, like 32 random bytes in base64url.
+export const JOB_SECRET = "test-job-secret-0123456789abcdefghijklmnopq";
 
 interface BuildOptions {
     keys: TestKeys;
@@ -93,36 +101,61 @@ interface BuildOptions {
 export function buildTestApp({ keys, production = false, authService, profileExists, limits = NO_LIMITS }: BuildOptions) {
     const cookies = createSessionCookies(production);
     const service = createFakeAuthService(authService);
-    const getProfile = vi.fn(async (id: string) => ({ id, email: "me@example.com", createdAt: new Date("2026-01-01T00:00:00.000Z") }));
+    const getProfile = vi.fn(async (id: string) => ({ id, email: "me@example.com", timeZone: "UTC", createdAt: new Date("2026-01-01T00:00:00.000Z") }));
+    const setTimeZone = vi.fn(async (id: string, timeZone: string) => ({ id, email: "me@example.com", timeZone, createdAt: new Date("2026-01-01T00:00:00.000Z") }));
+    const sendReminders = { run: vi.fn(async () => ({ usersDue: 0, sent: 0, alreadySent: 0, notYetMorning: 0, capped: 0, failed: 0 })) };
     const paymentMethodService = {
         create: vi.fn(async () => ({ id: USER_ID, type: "credit_card" as const, isActive: true, createdAt: new Date() })),
         list: vi.fn(async () => []),
     };
-    const subscriptionService = { create: vi.fn(async () => ({}) as never), list: vi.fn(async () => []) };
+    const subscriptionService = {
+        create: vi.fn(async () => ({}) as never),
+        list: vi.fn(async () => ({ items: [], nextCursor: null })),
+        get: vi.fn(async () => ({}) as never),
+    };
     const app = createApp({
         corsOrigin: ORIGIN,
         sessionCookies: cookies,
         authService: service,
-        profileService: { getProfile },
+        profileService: { getProfile, setTimeZone },
         paymentMethodService,
         subscriptionService,
         limiters: createRateLimiters(limits),
         trustProxyHops: 0,
+        internalJobs: { secret: JOB_SECRET, sendReminders },
         auth: createAuth({
             cookies,
             verifyToken: createTokenVerifier(SUPABASE_URL, keys.jwks),
             profileExists: profileExists ?? (async () => true),
         }),
     });
-    return { app, service, getProfile, cookies, paymentMethodService, subscriptionService };
+    return { app, service, getProfile, setTimeZone, sendReminders, cookies, paymentMethodService, subscriptionService };
 }
 
 // The same app, but with the real repositories and services on the local database. Only the
 // email provider is replaced by a spy, so tests can see what would be sent and to whom.
-export function buildDbTestApp({ keys, db, limits = NO_LIMITS, sendEmail }: { keys: TestKeys; db: Db; limits?: RateLimitConfig; sendEmail?: (m: EmailMessage) => Promise<void> }) {
+export function buildDbTestApp({
+    keys,
+    db,
+    limits = NO_LIMITS,
+    sendEmail,
+    now,
+}: {
+    keys: TestKeys;
+    db: Db;
+    limits?: RateLimitConfig;
+    sendEmail?: (m: EmailMessage) => Promise<void>;
+    // The reminder job's clock; tests fix it to a known moment.
+    now?: () => Date;
+}) {
     const cookies = createSessionCookies(false);
     const profiles = createProfileRepository(db.app);
     const email = vi.fn(sendEmail ?? (async () => {}));
+    const notifications = createNotificationService({
+        profiles,
+        email: { send: email },
+        reserveSlot: (userId) => withUserContext(db.app, userId, (client) => reserveEmailSlot(client, userId, EMAIL_DAILY_CAP)),
+    });
     const app = createApp({
         corsOrigin: ORIGIN,
         sessionCookies: cookies,
@@ -131,10 +164,11 @@ export function buildDbTestApp({ keys, db, limits = NO_LIMITS, sendEmail }: { ke
         paymentMethodService: createPaymentMethodService(createPaymentMethodRepository(db.app)),
         subscriptionService: createSubscriptionService({
             subscriptions: createSubscriptionRepository(db.app),
-            notifications: createNotificationService({ profiles, email: { send: email } }),
+            notifications,
         }),
         limiters: createRateLimiters(limits),
         trustProxyHops: 0,
+        internalJobs: { secret: JOB_SECRET, sendReminders: createSendRemindersJob({ pool: db.job, notifications, now }) },
         auth: createAuth({ cookies, verifyToken: createTokenVerifier(SUPABASE_URL, keys.jwks), profileExists: profiles.exists }),
     });
     return { app, email };

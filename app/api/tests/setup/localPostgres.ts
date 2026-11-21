@@ -17,6 +17,8 @@ export interface LocalPg {
     adminUrl: string;
     // The least-privilege role the API connects as.
     appUrl: string;
+    // The role the scheduled jobs connect as.
+    jobUrl: string;
 }
 
 declare module "vitest" {
@@ -99,11 +101,13 @@ export default async function setup(project: TestProject) {
         }
         // Production sets this with \password; here any value will do, over loopback only.
         await admin.query("ALTER ROLE app_user PASSWORD 'local-test-only'");
+        await admin.query("ALTER ROLE job_runner PASSWORD 'local-test-only'");
         await admin.end();
 
         project.provide("localPg", {
             adminUrl: `${base}/app_test`,
             appUrl: `postgresql://app_user:local-test-only@127.0.0.1:${port}/app_test`,
+            jobUrl: `postgresql://job_runner:local-test-only@127.0.0.1:${port}/app_test`,
         });
     } catch (err) {
         run("pg_ctl", ["-D", data, "-m", "immediate", "stop"]);

@@ -482,12 +482,15 @@ describe.skipIf(!local)("Story 2: payment methods and subscriptions through the 
         it("a failing email provider does not fail or undo the save, and the log has no address", async () => {
             const logged = vi.spyOn(console, "error").mockImplementation(() => {});
             const failing = supertest(buildDbTestApp({ keys, db, sendEmail: async () => { throw new Error("email provider rejected the message (validation_error)"); } }).app);
-            const pm = await newMethod(alice);
-            const res = await failing.post("/api/v1/subscriptions").set("Origin", ORIGIN).set("Cookie", alice.cookie).send(body(pm, { name: "Survives" }));
+            // A fresh user: the shared ones have used up today's email allowance in earlier tests.
+            const fresh = await createUser(db, "fresh-failing@example.com");
+            const f = { ...fresh, cookie: await sessionCookie(keys, fresh.id) };
+            const pm = await newMethod(f);
+            const res = await failing.post("/api/v1/subscriptions").set("Origin", ORIGIN).set("Cookie", f.cookie).send(body(pm, { name: "Survives" }));
             expect(res.status).toBe(201);
             await vi.waitFor(() => expect(logged).toHaveBeenCalled());
-            expect(JSON.stringify(logged.mock.calls)).not.toContain("alice@example.com");
-            expect(await rows("subscriptions", alice.id)).toBeGreaterThan(0);
+            expect(JSON.stringify(logged.mock.calls)).not.toContain("fresh-failing@example.com");
+            expect(await rows("subscriptions", f.id)).toBe(1);
             logged.mockRestore();
         });
     });

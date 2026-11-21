@@ -12,6 +12,8 @@ export interface RateLimitConfig {
     login: { limit: number; windowMs: number };
     register: { limit: number; windowMs: number };
     session: { limit: number; windowMs: number };
+    // Wrong or missing job secrets, per address. Correct requests are not counted.
+    jobAuthFailures: { limit: number; windowMs: number };
 }
 
 // Sized from a measurement against the real database, not guessed: one database round trip is
@@ -25,13 +27,16 @@ export const defaultRateLimits: RateLimitConfig = {
     login: { limit: 10, windowMs: 15 * MINUTE },
     register: { limit: 5, windowMs: HOUR },
     session: { limit: 30, windowMs: 15 * MINUTE },
+    jobAuthFailures: { limit: 5, windowMs: MINUTE },
 };
 
 type Window = { limit: number; windowMs: number };
 
-function limiter(window: Window, key: (req: Request) => string): RequestHandler {
+function limiter(window: Window, key: (req: Request) => string, options: { onlyFailures?: boolean } = {}): RequestHandler {
     return rateLimit({
         ...window,
+        // Only responses with status 400 or above are counted.
+        skipSuccessfulRequests: options.onlyFailures ?? false,
         standardHeaders: "draft-8",
         legacyHeaders: false,
         keyGenerator: key,
@@ -54,6 +59,7 @@ export function createRateLimiters(config: RateLimitConfig = defaultRateLimits) 
         login: limiter(config.login, byIp),
         register: limiter(config.register, byIp),
         session: limiter(config.session, byIp),
+        jobAuthFailures: limiter(config.jobAuthFailures, byIp, { onlyFailures: true }),
     };
 }
 

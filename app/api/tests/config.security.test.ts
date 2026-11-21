@@ -18,6 +18,8 @@ const validEnv = {
     CORS_ORIGIN: "http://localhost:3000",
     RESEND_API_KEY: "re_test",
     EMAIL_FROM: "Subscription Manager <onboarding@resend.dev>",
+    JOB_DATABASE_URL: "postgresql://job_runner.ref:other-secret-pw@host:5432/postgres",
+    INTERNAL_JOB_SECRET: "x".repeat(43),
 };
 
 function sourceFiles(dir: string): string[] {
@@ -40,13 +42,18 @@ describe("SEC-019: configuration fails closed and never prints values", () => {
         expect(loadEnv(validEnv).PORT).toBe(4000);
     });
 
-    it.each(["DATABASE_URL", "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "CORS_ORIGIN", "RESEND_API_KEY", "EMAIL_FROM"])(
+    it.each(["DATABASE_URL", "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "CORS_ORIGIN", "RESEND_API_KEY", "EMAIL_FROM", "JOB_DATABASE_URL", "INTERNAL_JOB_SECRET"])(
         "refuses to start without %s, and the error names the setting only",
         (name) => {
             const env: Record<string, string | undefined> = { ...validEnv, [name]: undefined };
             expect(() => loadEnv(env)).toThrow(`Invalid configuration: ${name}`);
         },
     );
+
+    it("SEC-016: refuses a job secret shorter than 32 random bytes (43 base64url characters)", () => {
+        expect(() => loadEnv({ ...validEnv, INTERNAL_JOB_SECRET: "x".repeat(42) })).toThrow("Invalid configuration: INTERNAL_JOB_SECRET");
+        expect(() => loadEnv({ ...validEnv, INTERNAL_JOB_SECRET: "" })).toThrow("Invalid configuration: INTERNAL_JOB_SECRET");
+    });
 
     it("rejects a malformed proxy hop count and defaults to none", () => {
         expect(loadEnv(validEnv).TRUST_PROXY_HOPS).toBe(0);

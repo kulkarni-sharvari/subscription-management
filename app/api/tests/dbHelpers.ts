@@ -7,6 +7,7 @@ import type { LocalPg } from "./setup/localPostgres.js";
 export interface Db {
     admin: pg.Pool;
     app: pg.Pool;
+    job: pg.Pool;
     close(): Promise<void>;
 }
 
@@ -15,7 +16,9 @@ export interface Db {
 export function connect(local: LocalPg, appOptions: { max?: number; connectionTimeoutMillis?: number } = {}): Db {
     const admin = new pg.Pool({ connectionString: local.adminUrl, max: 3 });
     const app = createPool(local.appUrl, { max: 5, ...appOptions });
-    return { admin, app, close: async () => void (await Promise.all([admin.end(), app.end()])) };
+    // job: the scheduled jobs' role (cross-user reads, writes only the notification tables).
+    const job = createPool(local.jobUrl, { max: 2 });
+    return { admin, app, job, close: async () => void (await Promise.all([admin.end(), app.end(), job.end()])) };
 }
 
 // A user exactly as Supabase creates one: a row in auth.users. The trigger from migration 001

@@ -236,3 +236,57 @@ export function createSubscriptionRepository(pool: pg.Pool) {
 }
 
 export type SubscriptionRepository = ReturnType<typeof createSubscriptionRepository>;
+
+// One subscription that may need a renewal reminder, with its owner's address and time zone.
+export interface ReminderCandidate {
+    userId: string;
+    email: string;
+    timeZone: string;
+    subscriptionId: string;
+    name: string;
+    cost: number;
+    billingPeriod: BillingPeriod;
+    renewalLink: string | null;
+    paymentMethodType: PaymentMethodType;
+    dueDate: string;
+}
+
+// CROSS-USER, for the reminder job only (run with the job_runner role, never app_user). Every
+// active recurring subscription whose current cycle is paid and due between the two dates.
+// The job then works out each user's own calendar day and keeps only what is 1 to 5 days away.
+// Owner, payment method and billing rows are all joined on the same user_id, so a row can never
+// mix one user's subscription with another user's address or data.
+export async function findReminderCandidatesForAllUsers(
+    db: Pick<pg.Pool, "query">,
+    dueFrom: string,
+    dueTo: string,
+): Promise<ReminderCandidate[]> {
+    const { rows } = await db.query(
+        `SELECT p.id AS user_id, p.email, p.time_zone, s.id, s.name, s.price, s.billing_period,
+                s.renewal_link, pm.type AS pm_type, c.due_date
+           FROM subscriptions s
+           JOIN profiles p ON p.id = s.user_id
+           JOIN payment_methods pm ON pm.id = s.payment_method_id AND pm.user_id = s.user_id
+           JOIN LATERAL (
+                SELECT b.due_date, b.status FROM billing b
+                 WHERE b.subscription_id = s.id AND b.user_id = s.user_id
+                 ORDER BY b.due_date DESC LIMIT 1
+           ) c ON true
+          WHERE s.status = 'active' AND s.subscription_type = 'recurring' AND c.status = 'paid'
+            AND c.due_date BETWEEN $1::date AND $2::date
+          ORDER BY p.id, c.due_date, s.name, s.id`,
+        [dueFrom, dueTo],
+    );
+    return rows.map((row) => ({
+        userId: row.user_id,
+        email: row.email,
+        timeZone: row.time_zone,
+        subscriptionId: row.id,
+        name: row.name,
+        cost: Number(row.price),
+        billingPeriod: row.billing_period,
+        renewalLink: row.renewal_link,
+        paymentMethodType: row.pm_type,
+        dueDate: row.due_date,
+    }));
+}

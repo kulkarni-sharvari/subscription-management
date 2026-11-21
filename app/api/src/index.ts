@@ -4,9 +4,11 @@ import { createApp } from "./app.js";
 import { loadEnv } from "./config/env.js";
 import { createPool } from "./db/pool.js";
 import { createAuth, createTokenVerifier } from "./middleware/auth.js";
+import { createSendRemindersJob } from "./jobs/sendReminders.js";
 import { createSessionCookies } from "./session/cookies.js";
 import { createAuthService } from "./services/authService.js";
 import { createRateLimiters } from "./middleware/rateLimit.js";
+import { reserveEmailSlot } from "./repositories/notificationLogRepository.js";
 import { createPaymentMethodRepository } from "./repositories/paymentMethodRepository.js";
 import { createProfileRepository } from "./repositories/profileRepository.js";
 import { createSubscriptionRepository } from "./repositories/subscriptionRepository.js";
@@ -15,12 +17,22 @@ import { createNotificationService } from "./services/notificationService.js";
 import { createPaymentMethodService } from "./services/paymentMethodService.js";
 import { createSubscriptionService } from "./services/subscriptionService.js";
 import { createProfileService } from "./services/profileService.js";
+import { withUserContext } from "./db/pool.js";
+import { EMAIL_DAILY_CAP } from "./services/notificationService.js";
 
 // Throws at startup if configuration is missing or invalid, so the server never runs half-configured.
 const env = loadEnv();
 // DATABASE_URL must be the app_user (least-privilege) connection, not the admin one.
 const pool = createPool(env.DATABASE_URL);
+// The scheduled jobs use their own role and a small pool of their own, so a job can never take
+// connections that user requests need.
+const jobPool = createPool(env.JOB_DATABASE_URL, { max: 2 });
 const profiles = createProfileRepository(pool);
+const notifications = createNotificationService({
+    profiles,
+    email: createEmailService({ apiKey: env.RESEND_API_KEY, from: env.EMAIL_FROM }),
+    reserveSlot: (userId) => withUserContext(pool, userId, (client) => reserveEmailSlot(client, userId, EMAIL_DAILY_CAP)),
+});
 // Secure cookies (HTTPS only) in production; plain http://localhost cannot carry them in development.
 const sessionCookies = createSessionCookies(env.NODE_ENV === "production");
 const app = createApp({
@@ -39,13 +51,14 @@ const app = createApp({
     paymentMethodService: createPaymentMethodService(createPaymentMethodRepository(pool)),
     subscriptionService: createSubscriptionService({
         subscriptions: createSubscriptionRepository(pool),
-        notifications: createNotificationService({
-            profiles,
-            email: createEmailService({ apiKey: env.RESEND_API_KEY, from: env.EMAIL_FROM }),
-        }),
+        notifications,
     }),
     limiters: createRateLimiters(),
     trustProxyHops: env.TRUST_PROXY_HOPS,
+    internalJobs: {
+        secret: env.INTERNAL_JOB_SECRET,
+        sendReminders: createSendRemindersJob({ pool: jobPool, notifications }),
+    },
 });
 
 const server = app.listen(env.PORT, () => {
@@ -57,7 +70,7 @@ const server = app.listen(env.PORT, () => {
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
         server.close(() => {
-            void pool.end().then(() => process.exit(0));
+            void Promise.all([pool.end(), jobPool.end()]).then(() => process.exit(0));
         });
     });
 }

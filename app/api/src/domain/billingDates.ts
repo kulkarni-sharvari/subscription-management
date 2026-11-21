@@ -33,3 +33,20 @@ export function addBillingPeriod(date: string, period: BillingPeriod): string {
 
     return [targetYear, targetMonth, targetDay].map((n, i) => String(n).padStart(i === 0 ? 4 : 2, "0")).join("-");
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const toUtcMs = (date: string) => {
+    const [year, month, day] = date.split("-").map(Number);
+    return Date.UTC(year, month - 1, day);
+};
+const fromUtcMs = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+// Calendar days from one date to another (negative if `to` is earlier). Whole days on the calendar,
+// so daylight-saving changes never make a day 23 or 25 hours long here.
+export function daysBetween(from: string, to: string): number {
+    return Math.round((toUtcMs(to) - toUtcMs(from)) / DAY_MS);
+}
+
+export function addDays(date: string, days: number): string {
+    return fromUtcMs(toUtcMs(date) + days * DAY_MS);
+}

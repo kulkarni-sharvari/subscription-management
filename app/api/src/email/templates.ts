@@ -64,3 +64,51 @@ export function subscriptionsAddedEmail(subs: SubscriptionDetail[]): EmailConten
     ].join("\n");
     return { subject, html, text };
 }
+
+// One subscription in a renewal digest.
+export interface DigestItem {
+    name: string;
+    cost: number;
+    billingPeriod: keyof typeof PERIOD_LABEL;
+    dueDate: string;
+    daysLeft: number;
+    paymentMethodType: keyof typeof METHOD_LABEL;
+    renewalLink: string | null;
+}
+
+const inDays = (days: number) => (days === 1 ? "tomorrow" : `in ${days} days`);
+
+// The daily renewal digest (Story 4, FR-050): everything of one user's that renews in the next 1
+// to 5 days, in one email. Same rules as above: one recipient, every value escaped, a listing cap.
+export function renewalDigestEmail(items: DigestItem[]): EmailContent {
+    if (items.length === 0) throw new Error("no subscriptions to describe");
+    const listed = items.slice(0, MAX_LISTED);
+    const omitted = items.length - listed.length;
+
+    const subject = items.length === 1 ? `Renews ${inDays(items[0].daysLeft)}: ${items[0].name}` : `${items.length} subscriptions renew soon`;
+    const intro =
+        items.length === 1
+            ? "One of your subscriptions renews soon. Decide whether to keep it."
+            : `${items.length} of your subscriptions renew soon. Decide which to keep.`;
+    const more = omitted > 0 ? `...and ${omitted} more. Open the app to see them all.` : "";
+
+    const rows = (item: DigestItem): Array<[string, string]> => {
+        const list: Array<[string, string]> = [
+            ["Name", item.name],
+            ["Renews", `${item.dueDate} (${inDays(item.daysLeft)})`],
+            ["Cost", item.cost.toFixed(2)],
+            ["Billing", PERIOD_LABEL[item.billingPeriod]],
+            ["Payment method", METHOD_LABEL[item.paymentMethodType]],
+        ];
+        if (item.renewalLink) list.push(["Renewal link", item.renewalLink]);
+        return list;
+    };
+
+    const html = `<p>${escapeHtml(intro)}</p>` + listed.map((item) => htmlTable(rows(item))).join("<br>") + (more ? `<p>${escapeHtml(more)}</p>` : "");
+    const text = [
+        intro,
+        ...listed.flatMap((item) => ["", ...rows(item).map(([label, value]) => `${label}: ${value}`)]),
+        ...(more ? ["", more] : []),
+    ].join("\n");
+    return { subject, html, text };
+}
