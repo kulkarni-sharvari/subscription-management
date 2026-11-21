@@ -25,6 +25,22 @@ export interface Subscription {
   currentCycle: { dueDate: string; status: 'paid' | 'due' } | null
 }
 
+export interface SubscriptionDetail extends Subscription {
+  renewalLink: string | null
+  cancellationLink: string | null
+  startDate: string
+  createdAt: string
+  updatedAt: string
+}
+
+// One page of a list. nextCursor is null on the last page; otherwise pass it back for the next one.
+export interface SubscriptionPage {
+  items: Subscription[]
+  nextCursor: string | null
+}
+
+export const STATUSES: readonly SubscriptionStatus[] = ['active', 'active-unknown', 'inactive']
+
 export interface NewSubscription {
   name: string
   category: string
@@ -52,7 +68,12 @@ export const PERIOD_LABEL: Record<BillingPeriod, string> = {
 
 export const listPaymentMethods = () => api.get<PaymentMethod[]>('/payment-methods')
 export const createPaymentMethod = (type: PaymentMethodType) => api.post<PaymentMethod>('/payment-methods', { type })
-export const listSubscriptions = (status: SubscriptionStatus) => api.get<Subscription[]>(`/subscriptions?status=${status}`)
+export function listSubscriptions(status: SubscriptionStatus, cursor?: string | null) {
+  const query = new URLSearchParams({ status })
+  if (cursor) query.set('cursor', cursor)
+  return api.get<SubscriptionPage>(`/subscriptions?${query}`)
+}
+export const getSubscription = (id: string) => api.get<SubscriptionDetail>(`/subscriptions/${encodeURIComponent(id)}`)
 export const createSubscription = (body: NewSubscription) => api.post<Subscription>('/subscriptions', body)
 
 // One currency for the whole app (BR-011). Change it here if the account currency changes.

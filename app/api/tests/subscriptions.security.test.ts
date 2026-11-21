@@ -57,6 +57,7 @@ describe.skipIf(!local)("Story 2: payment methods and subscriptions through the 
         it.each([
             ["get", "/payment-methods"], ["post", "/payment-methods"],
             ["get", "/subscriptions?status=active"], ["post", "/subscriptions"],
+            ["get", "/subscriptions/3f1c2b7e-8a53-4e0f-9d52-6b7c1f2a9e10"],
         ] as const)("%s %s without a cookie returns 401", async (method, path) => {
             const res = await api[method](`/api/v1${path}`).set("Origin", ORIGIN).send({});
             expect(res.status).toBe(401);
@@ -204,8 +205,8 @@ describe.skipIf(!local)("Story 2: payment methods and subscriptions through the 
             for (const name of ["L1", "L2", "L3"]) await post("/subscriptions", l, body(lenaMethod, { name }));
             await post("/subscriptions", m, body(moMethod, { name: "M1" }));
 
-            const lenaList = (await get("/subscriptions?status=active", l)).body;
-            const moList = (await get("/subscriptions?status=active", m)).body;
+            const lenaList = (await get("/subscriptions?status=active", l)).body.items;
+            const moList = (await get("/subscriptions?status=active", m)).body.items;
             expect(lenaList.map((s: { name: string }) => s.name).sort()).toEqual(["L1", "L2", "L3"]);
             expect(moList.map((s: { name: string }) => s.name)).toEqual(["M1"]);
         });
@@ -218,12 +219,165 @@ describe.skipIf(!local)("Story 2: payment methods and subscriptions through the 
             const pm = await newMethod(n);
             await post("/subscriptions", n, body(pm, { name: "Later", startDate: "2026-12-01" }));
             await post("/subscriptions", n, body(pm, { name: "Sooner", startDate: "2026-03-01" }));
-            const list = (await get("/subscriptions?status=active", n)).body;
+            const list = (await get("/subscriptions?status=active", n)).body.items;
             expect(list.map((s: { name: string }) => s.name)).toEqual(["Sooner", "Later"]);
-            expect((await get("/subscriptions?status=inactive", n)).body).toEqual([]);
+            expect((await get("/subscriptions?status=inactive", n)).body).toEqual({ items: [], nextCursor: null });
             expect((await get("/subscriptions?status=deleted", n)).status).toBe(400);
             expect((await get("/subscriptions", n)).status).toBe(400);
             expect((await get("/subscriptions?status=active&sort=name;DROP", n)).status).toBe(400);
+        });
+    });
+
+    describe("Story 3: pages, cursors and the detail view", () => {
+        type Item = { id: string; name: string };
+        const names = (items: Item[]) => items.map((i) => i.name);
+        const b64 = (value: unknown) => Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
+
+        // Walks every page of a list and returns the names in the order they arrived.
+        const walk = async (who: { cookie: string }, status: string, limit: number) => {
+            const seen: string[] = [];
+            let cursor: string | null = null;
+            let pages = 0;
+            do {
+                const res = await get(`/subscriptions?status=${status}&limit=${limit}${cursor ? `&cursor=${cursor}` : ""}`, who);
+                expect(res.status).toBe(200);
+                seen.push(...names(res.body.items));
+                cursor = res.body.nextCursor;
+                pages++;
+            } while (cursor && pages < 30);
+            return { seen, pages };
+        };
+
+        let paula: { id: string; cookie: string };
+        const ids: Record<string, string> = {};
+
+        beforeAll(async () => {
+            const user = await createUser(db);
+            paula = { ...user, cookie: await sessionCookie(keys, user.id) };
+            const pm = await newMethod(paula);
+            // Due dates tie on purpose, and two subscriptions share both name and date, so the id has to break the tie.
+            const plan: Array<[string, string]> = [
+                ["S1", "2026-01-10"], ["S2", "2026-01-10"], ["S3", "2026-02-10"], ["Twin", "2026-02-10"],
+                ["Twin ", "2026-02-10"], ["S5", "2026-03-10"], ["S6", "2026-04-10"],
+            ];
+            for (const [name, startDate] of plan) {
+                const res = await post("/subscriptions", paula, body(pm, { name, startDate }));
+                expect(res.status).toBe(201);
+                ids[name] = res.body.id;
+            }
+        });
+
+        it("pages through the active list in order, none skipped and none repeated", async () => {
+            const everything = (await walk(paula, "active", 100)).seen;
+            expect(everything).toHaveLength(7);
+            for (const size of [1, 2, 3, 4, 6, 7]) {
+                const { seen } = await walk(paula, "active", size);
+                expect(seen, `limit ${size}`).toEqual(everything);
+                expect(new Set(seen).size === seen.length || seen.filter((n) => n === "Twin").length === 2).toBe(true);
+            }
+            expect(everything.slice(0, 2)).toEqual(["S1", "S2"]);
+            expect(everything[everything.length - 1]).toBe("S6");
+        });
+
+        it("two subscriptions with the same name and date both appear when pages are one row long", async () => {
+            const { seen } = await walk(paula, "active", 1);
+            expect(seen.filter((n) => n.trim() === "Twin")).toHaveLength(2);
+        });
+
+        it("the page boundary is exact: a full last page has no next cursor, one fewer does", async () => {
+            const exact = await get("/subscriptions?status=active&limit=7", paula);
+            expect(exact.body.items).toHaveLength(7);
+            expect(exact.body.nextCursor).toBeNull();
+            const short = await get("/subscriptions?status=active&limit=6", paula);
+            expect(short.body.items).toHaveLength(6);
+            expect(typeof short.body.nextCursor).toBe("string");
+        });
+
+        it("without a limit the page size is the default, and the cursor is an opaque string, not a row id", async () => {
+            const res = await get("/subscriptions?status=active", paula);
+            expect(res.body.items).toHaveLength(7);
+            const first = await get("/subscriptions?status=active&limit=1", paula);
+            expect(first.body.nextCursor).not.toContain(first.body.items[0].id);
+        });
+
+        it.each(["0", "101", "-1", "abc", "1.5", "", "1e2", "%205", "1000"])("limit=%j is rejected with 400", async (limit) => {
+            const res = await get(`/subscriptions?status=active&limit=${limit}`, paula);
+            expect(res.status).toBe(400);
+        });
+
+        it.each([
+            ["not base64 json", "garbage"],
+            ["an empty object", b64({})],
+            ["an extra field", b64({ due: "2026-01-01", name: "x", id: "3f1c2b7e-8a53-4e0f-9d52-6b7c1f2a9e10", sql: "1" })],
+            ["an id that is not a uuid", b64({ due: "2026-01-01", name: "x", id: "1 OR 1=1" })],
+            ["a date that does not exist", b64({ due: "2026-02-30", name: "x", id: "3f1c2b7e-8a53-4e0f-9d52-6b7c1f2a9e10" })],
+            ["a name over 100 characters", b64({ due: "2026-01-01", name: "x".repeat(101), id: "3f1c2b7e-8a53-4e0f-9d52-6b7c1f2a9e10" })],
+            ["an array", b64([1, 2, 3])],
+            ["text over 512 characters", "A".repeat(513)],
+        ])("a cursor with %s is rejected with 400", async (_label, cursor) => {
+            const res = await get(`/subscriptions?status=active&cursor=${cursor}`, paula);
+            expect(res.status).toBe(400);
+            expect(res.body.error.field).toBe("cursor");
+        });
+
+        it("SEC-033: SQL in a cursor's name is only ever a value, and the table survives", async () => {
+            const cursor = b64({ due: "2026-01-01", name: "x'; DROP TABLE subscriptions;--", id: "3f1c2b7e-8a53-4e0f-9d52-6b7c1f2a9e10" });
+            const res = await get(`/subscriptions?status=active&cursor=${cursor}`, paula);
+            expect(res.status).toBe(200);
+            expect((await db.admin.query("SELECT count(*) FROM subscriptions")).rows[0].count).not.toBe("0");
+        });
+
+        it("SEC-029: someone else's cursor reveals nothing of the other person's rows", async () => {
+            const first = await get("/subscriptions?status=active&limit=2", paula);
+            const stolen = first.body.nextCursor as string;
+            const bobsMethod = await newMethod(bob);
+            const mine = await post("/subscriptions", bob, body(bobsMethod, { name: "BobOnly", startDate: "2026-12-12" }));
+            const res = await get(`/subscriptions?status=active&cursor=${stolen}`, bob);
+            expect(res.status).toBe(200);
+            const bobIds = (await db.admin.query("SELECT id FROM subscriptions WHERE user_id = $1", [bob.id])).rows.map((r) => r.id);
+            for (const item of res.body.items) expect(bobIds).toContain(item.id);
+            expect(res.body.items.map((i: Item) => i.id)).toContain(mine.body.id);
+        });
+
+        it("each status lists only its own subscriptions, and inactive pages alphabetically", async () => {
+            // Stand in for Stories 5 and 7, which will change status: done here as the database owner.
+            await db.admin.query("UPDATE subscriptions SET status = 'inactive' WHERE id = ANY($1)", [[ids["S5"], ids["S2"], ids["S6"]]]);
+            await db.admin.query("UPDATE subscriptions SET status = 'active-unknown' WHERE id = $1", [ids["S3"]]);
+            await db.admin.query("UPDATE billing SET status = 'due' WHERE subscription_id = $1", [ids["S3"]]);
+
+            expect((await walk(paula, "inactive", 2)).seen).toEqual(["S2", "S5", "S6"]);
+            const unknown = (await get("/subscriptions?status=active-unknown", paula)).body.items;
+            expect(names(unknown)).toEqual(["S3"]);
+            expect(unknown[0].currentCycle).toEqual({ dueDate: "2026-03-10", status: "due" });
+            expect((await walk(paula, "active", 2)).seen).toHaveLength(3);
+        });
+
+        describe("the detail view (FR-021, SEC-031)", () => {
+            it("returns the full subscription, with the links and dates, and no user id", async () => {
+                const res = await get(`/subscriptions/${ids["S1"]}`, paula);
+                expect(res.status).toBe(200);
+                expect(res.body).toMatchObject({
+                    id: ids["S1"], name: "S1", cost: 15.49, status: "active", renewalLink: "https://example.com/renew",
+                    cancellationLink: "https://example.com/cancel", startDate: "2026-01-10",
+                });
+                expect(typeof res.body.createdAt).toBe("string");
+                expect(JSON.stringify(res.body)).not.toContain(paula.id);
+            });
+
+            it("shows a subscription whatever its status", async () => {
+                expect((await get(`/subscriptions/${ids["S5"]}`, paula)).body.status).toBe("inactive");
+            });
+
+            it("someone else's id and an unknown id give the identical 404", async () => {
+                const theirs = await get(`/subscriptions/${ids["S1"]}`, bob);
+                const unknown = await get("/subscriptions/3f1c2b7e-8a53-4e0f-9d52-6b7c1f2a9e10", bob);
+                expect(theirs.status).toBe(404);
+                expect(theirs.body).toEqual(unknown.body);
+            });
+
+            it.each(["abc", "123", "..%2Fme", "3f1c2b7e-8a53-4e0f-9d52-6b7c1f2a9e1", "1%27%20OR%20%271%27=%271"])("the malformed id %j is a 404, not a 500", async (id) => {
+                expect((await get(`/subscriptions/${id}`, paula)).status).toBe(404);
+            });
         });
     });
 

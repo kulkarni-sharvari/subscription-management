@@ -5,6 +5,7 @@ import ConfirmEmail from './pages/ConfirmEmail'
 import Home from './pages/Home'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import SubscriptionDetail from './pages/SubscriptionDetail'
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
       <Route element={<RequireAuth />}>
         <Route path="/" element={<Home />} />
         <Route path="/subscriptions/new" element={<AddSubscription />} />
+        <Route path="/subscriptions/:id" element={<SubscriptionDetail />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

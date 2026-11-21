@@ -1,5 +1,6 @@
 import { addBillingPeriod } from "../domain/billingDates.js";
-import type { NewSubscription, SubscriptionRepository, SubscriptionStatus } from "../repositories/subscriptionRepository.js";
+import { NotFoundError } from "../errors.js";
+import type { NewSubscription, PageKey, SubscriptionRepository, SubscriptionStatus } from "../repositories/subscriptionRepository.js";
 import type { NotificationService } from "./notificationService.js";
 
 export function createSubscriptionService(deps: {
@@ -25,7 +26,15 @@ export function createSubscriptionService(deps: {
             return created;
         },
 
-        list: (userId: string, status: SubscriptionStatus) => deps.subscriptions.listByStatus(userId, status),
+        list: (userId: string, status: SubscriptionStatus, page: { limit: number; after?: PageKey }) =>
+            deps.subscriptions.listByStatus(userId, status, page),
+
+        // FR-021. Someone else's subscription gets the same 404 as one that does not exist (SEC-031).
+        async get(userId: string, id: string) {
+            const found = await deps.subscriptions.findById(userId, id);
+            if (!found) throw new NotFoundError();
+            return found;
+        },
     };
 }
 

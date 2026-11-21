@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { isValidIsoDate } from "../domain/billingDates.js";
-import { UnauthorizedError } from "../errors.js";
+import { NotFoundError, UnauthorizedError, ValidationError } from "../errors.js";
 import type { RateLimiters } from "../middleware/rateLimit.js";
-import type { NewSubscription } from "../repositories/subscriptionRepository.js";
+import { decodeCursor, type NewSubscription } from "../repositories/subscriptionRepository.js";
 import type { SubscriptionService } from "../services/subscriptionService.js";
 import { parse } from "../validation.js";
 
@@ -78,8 +78,18 @@ const createBody = z
         }
     });
 
+const DEFAULT_PAGE_SIZE = 20;
+
+//cursor is opaque and checked when it is decoded (a bad one is a 400).
 const listQuery = z.strictObject({
     status: z.enum(["active", "active-unknown", "inactive"], "status must be active, active-unknown or inactive"),
+    limit: z
+        .string()
+        .regex(/^\d{1,3}$/, "limit must be a whole number from 1 to 100")
+        .transform(Number)
+        .refine((n) => n >= 1 && n <= 100, "limit must be a whole number from 1 to 100")
+        .optional(),
+    cursor: z.string().max(512, "cursor is not valid").optional(),
 });
 
 // /api/v1/subscriptions (Story 2). HTTP layer only: validate, call the service, shape the answer.
@@ -100,8 +110,21 @@ export function createSubscriptionsRouter(service: SubscriptionService, limiters
 
     router.get("/", async (req, res) => {
         if (!req.userId) throw new UnauthorizedError();
-        const { status } = parse(listQuery, req.query);
-        res.json(await service.list(req.userId, status));
+        const { status, limit, cursor } = parse(listQuery, req.query);
+        let after;
+        if (cursor !== undefined) {
+            after = decodeCursor(cursor) ?? undefined;
+            if (!after) throw new ValidationError("cursor is not valid", "cursor");
+        }
+        res.json(await service.list(req.userId, status, { limit: limit ?? DEFAULT_PAGE_SIZE, after }));
+    });
+
+    // A malformed id gets the same 404 as an unknown or someone else's (SEC-031).
+    router.get("/:id", async (req, res) => {
+        if (!req.userId) throw new UnauthorizedError();
+        const id = z.uuid().safeParse(req.params.id);
+        if (!id.success) throw new NotFoundError();
+        res.json(await service.get(req.userId, id.data));
     });
 
     return router;
