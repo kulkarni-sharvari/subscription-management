@@ -1,8 +1,9 @@
 // SEC-036 and SEC-035 in the browser: user text renders as text, links are safe, and the address
 // bar cannot choose what the page asks the API for. The API is a fake fetch; nothing leaves the test.
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AuthProvider } from './auth/AuthProvider'
 import { AuthContext, type AuthState } from './auth/auth-context'
 import Home from './pages/Home'
 import SubscriptionDetail from './pages/SubscriptionDetail'
@@ -26,7 +27,7 @@ const item = (over: Record<string, unknown> = {}) => ({
 
 const auth: AuthState = {
   status: 'authenticated',
-  user: { id: 'u1', email: 'me@example.com', createdAt: '2026-11-01' },
+  user: { id: 'u1', email: 'me@example.com', timeZone: 'UTC', createdAt: '2026-11-01' },
   login: async () => {},
   register: async () => '',
   confirmEmail: async () => {},
@@ -62,6 +63,7 @@ function show(path: string) {
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   delete (window as { __pwned?: number }).__pwned
 })
 
@@ -129,5 +131,41 @@ describe('the address bar cannot choose what the page asks for', () => {
     await screen.findByText('Subscription not found')
     expect(calls).toHaveLength(1)
     expect(calls[0]).toBe('/api/v1/subscriptions/..%2F..%2Fme')
+  })
+})
+
+describe("Story 4: the browser reports the user's time zone", () => {
+  // Answers GET /me with the stored zone and records every request's method, path and body.
+  function fakeMe(storedZone: string) {
+    const calls: Array<{ method: string; url: string; body?: unknown }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        calls.push({ method: init.method ?? 'GET', url, body: init.body ? JSON.parse(init.body as string) : undefined })
+        const me = { id: 'u1', email: 'me@example.com', timeZone: storedZone, createdAt: '2026-11-01' }
+        return new Response(JSON.stringify(me), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+    return calls
+  }
+  const browserZone = (zone: string) =>
+    vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({ timeZone: zone } as Intl.ResolvedDateTimeFormatOptions)
+
+  it('sends the zone once when it differs from the stored one, and only the zone', async () => {
+    browserZone('Asia/Kolkata')
+    const calls = fakeMe('UTC')
+    render(<AuthProvider><p>app</p></AuthProvider>)
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true))
+    const patches = calls.filter((c) => c.method === 'PATCH')
+    expect(patches).toEqual([{ method: 'PATCH', url: '/api/v1/me', body: { timeZone: 'Asia/Kolkata' } }])
+  })
+
+  it('sends nothing when the stored zone already matches', async () => {
+    browserZone('UTC')
+    const calls = fakeMe('UTC')
+    render(<AuthProvider><p>app</p></AuthProvider>)
+    await waitFor(() => expect(calls.some((c) => c.url === '/api/v1/me')).toBe(true))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0)
   })
 })

@@ -3,6 +3,7 @@ import { createContext, useContext } from 'react'
 export interface User {
   id: string
   email: string
+  timeZone: string
   createdAt: string
 }
 

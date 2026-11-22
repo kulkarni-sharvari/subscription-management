@@ -2,8 +2,15 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { api, ApiError, setSessionEndedHandler } from '../api/client'
 import { AuthContext, type AuthState, type User } from './auth-context'
 
-// Holds "who is signed in". The browser cannot read the httpOnly session cookies, so the only
-// way to know is to ask the API (GET /me); a 401 means nobody is signed in.
+// sync timezone stored in DB with current browser timezone
+function syncTimeZone(stored: string) {
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  if (browserZone && browserZone !== stored) {
+    api.patch('/me', { timeZone: browserZone }).catch(() => {})
+  }
+}
+
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [status, setStatus] = useState<AuthState['status']>('loading')
@@ -13,6 +20,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const me = await api.get<User>('/me')
       setUser(me)
       setStatus('authenticated')
+      syncTimeZone(me.timeZone)
     } catch (err) {
       // Only a 401 means "signed out"; any other failure (server down) is not an answer.
       if (!(err instanceof ApiError) || err.status !== 401) throw err
@@ -30,6 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (cancelled) return
         setUser(me)
         setStatus('authenticated')
+        syncTimeZone(me.timeZone)
       })
       .catch(() => {
         // 401 means signed out; if the API is unreachable the login screen is still the right place.
