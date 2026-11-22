@@ -89,6 +89,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body }),
+  patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body }),
 }
 
 // What a form shows for any failure. Only ApiError messages are shown: they are written to be safe for users.
