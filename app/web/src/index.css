@@ -84,7 +84,8 @@
 
   /* Buttons */
   .btn-primary,
-  .btn-secondary {
+  .btn-secondary,
+  .btn-danger {
     @apply inline-flex items-center justify-center rounded-control px-4 py-2 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:cursor-not-allowed disabled:opacity-60;
   }
   .btn-primary {
@@ -92,6 +93,10 @@
   }
   .btn-secondary {
     @apply border border-line bg-surface text-ink hover:bg-brand-50;
+  }
+  /* The same red as error text (.field-error), for "I cancelled". */
+  .btn-danger {
+    @apply bg-danger-700 text-white hover:bg-danger-600;
   }
 
   /* Messages */
@@ -118,6 +123,9 @@
   }
 
   /* Subscription screens */
+  .action-row {
+    @apply flex flex-wrap justify-end gap-3;
+  }
   .page-actions {
     @apply flex items-center justify-between gap-4;
   }
