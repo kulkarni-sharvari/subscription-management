@@ -78,6 +78,24 @@ const createBody = z
         }
     });
 
+// "I renewed" (Story 6). Strict: no status, dates of cycles or user id can be sent; the API works
+// out the cycles itself. `missed` answers "what happened?" when more than one renewal date passed.
+const renewBody = z
+    .strictObject({
+        cost: cost.optional(),
+        paymentMethodId: z.uuid("Choose a payment method").optional(),
+        billingPeriod: z.enum(["monthly", "6_months", "annually"], "Choose monthly, every 6 months or annually").optional(),
+        missed: z.enum(["paid_all", "restarted"], "Choose whether you kept paying or restarted").optional(),
+        restartDate: startDate.optional(),
+    })
+    .superRefine((body, ctx) => {
+        if (body.missed === "restarted" && !body.restartDate) ctx.addIssue({ code: "custom", path: ["restartDate"], message: "Enter the date you restarted" });
+        if (body.missed !== "restarted" && body.restartDate) ctx.addIssue({ code: "custom", path: ["restartDate"], message: "A restart date goes only with \"restarted\"" });
+    });
+
+// SEC-041: every renew carries a client-generated UUID, so a retry or double click records once.
+const idempotencyKey = z.uuid("Send an Idempotency-Key header with a UUID");
+
 const DEFAULT_PAGE_SIZE = 20;
 
 //cursor is opaque and checked when it is decoded (a bad one is a 400).
@@ -125,6 +143,22 @@ export function createSubscriptionsRouter(service: SubscriptionService, limiters
         const id = z.uuid().safeParse(req.params.id);
         if (!id.success) throw new NotFoundError();
         res.json(await service.get(req.userId, id.data));
+    });
+
+    router.post("/:id/renew", limiters.writes, async (req, res) => {
+        if (!req.userId) throw new UnauthorizedError();
+        const id = z.uuid().safeParse(req.params.id);
+        if (!id.success) throw new NotFoundError();
+        const key = idempotencyKey.safeParse(req.get("Idempotency-Key"));
+        if (!key.success) throw new ValidationError("Send an Idempotency-Key header with a UUID", "Idempotency-Key");
+        const body = parse(renewBody, req.body ?? {});
+        const choice =
+            body.missed === "restarted" ? { missed: "restarted" as const, restartDate: body.restartDate! }
+            : body.missed === "paid_all" ? { missed: "paid_all" as const }
+            : {};
+        res.json(
+            await service.renew(req.userId, id.data, { cost: body.cost, paymentMethodId: body.paymentMethodId, billingPeriod: body.billingPeriod, choice }, { requestId: req.requestId, idempotencyKey: key.data }),
+        );
     });
 
     return router;

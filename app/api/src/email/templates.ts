@@ -160,3 +160,24 @@ export function renewalDigestEmail(items: DigestItem[], overdue: OverdueItem[] =
     ].join("\n");
     return { subject, html, text };
 }
+
+// The status-change email for "I renewed" (Story 6, FR-034): sent once per action, and only when
+// the status changed (active-unknown -> active).
+export function subscriptionRenewedEmail(sub: SubscriptionDetail, payments: number): EmailContent {
+    const subject = `Renewal recorded: ${sub.name}`;
+    const intro =
+        payments === 1
+            ? "You recorded a renewal. The subscription is active again."
+            : `You recorded ${payments} payments. The subscription is active again.`;
+    const rows: Array<[string, string]> = [
+        ["Name", sub.name],
+        ["Cost", sub.cost.toFixed(2)],
+        ["Billing", sub.billingPeriod ? PERIOD_LABEL[sub.billingPeriod] : "One-time purchase"],
+        ["Next renewal", sub.currentCycle?.dueDate ?? ""],
+        ["Payment method", METHOD_LABEL[sub.paymentMethod.type]],
+    ];
+    const html = `<p>${escapeHtml(intro)}</p>` + htmlTable(rows);
+    const text = [intro, "", ...rows.map(([label, value]) => `${label}: ${value}`)].join("\n");
+    return { subject, html, text };
+}
+

@@ -2,7 +2,9 @@ import type pg from "pg";
 import { z } from "zod";
 import { withUserContext } from "../db/pool.js";
 import { isValidIsoDate, type BillingPeriod } from "../domain/billingDates.js";
-import { ValidationError } from "../errors.js";
+import { planRenewal, renewalInfo, RenewalRefused, type RenewalChoice, type RenewalInfo } from "../domain/renewal.js";
+import { isValidTimeZone, localDateAndHour } from "../domain/timeZones.js";
+import { ConflictError, NotFoundError, ValidationError } from "../errors.js";
 import type { PaymentMethodType } from "./paymentMethodRepository.js";
 
 export type SubscriptionType = "recurring" | "one_time";
@@ -46,7 +48,31 @@ export interface SubscriptionDetail extends SubscriptionListItem {
     startDate: string;
     createdAt: Date;
     updatedAt: Date;
+    // Whether "I renewed" applies now, and what it would record (Story 6). Set on reads of one
+    // subscription; absent right after creating one.
+    renewal?: RenewalInfo;
 }
+
+// What "I renewed" may change (Story 6). Both apply to the new cycles and going forward.
+export interface RenewalInput {
+    cost?: number;
+    paymentMethodId?: string;
+    billingPeriod?: BillingPeriod;
+    choice: RenewalChoice;
+}
+
+export interface RenewalResult {
+    subscription: SubscriptionDetail;
+    // active-unknown -> active (an early renewal leaves it active and changes nothing visible).
+    statusChanged: boolean;
+    // The same Idempotency-Key was used before: nothing new was recorded (SEC-041).
+    replayed: boolean;
+    // Paid cycles this request added.
+    payments: number;
+}
+
+// The user's local date, from their stored time zone (UTC if it is somehow not a valid zone).
+const localToday = (timeZone: string) => localDateAndHour(new Date(), isValidTimeZone(timeZone) ? timeZone : "UTC").date;
 
 // Where a page of the list stops: the sort key of its last row. Every sort ends with the id, so
 // the order is total (two rows never tie) and no row is skipped or repeated between pages.
@@ -213,22 +239,88 @@ export function createSubscriptionRepository(pool: pg.Pool) {
 
         // One of the caller's subscriptions, or null. Someone else's id and a missing id look the same.
         async findById(userId: string, id: string): Promise<SubscriptionDetail | null> {
+            return withUserContext(pool, userId, (client) => selectDetail(client, userId, id));
+        },
+
+        // Story 6, FR-031: "I renewed". One transaction with the subscription row locked, so a
+        // double submit or a lapse running at the same moment waits and then sees the new state.
+        async renew(userId: string, id: string, input: RenewalInput, ctx: { requestId: string; idempotencyKey: string }): Promise<RenewalResult> {
             return withUserContext(pool, userId, async (client) => {
-                const { rows } = await client.query(
-                    `SELECT ${LIST_COLUMNS}, s.renewal_link, s.cancellation_link, s.start_date, s.created_at, s.updated_at
-                       ${FROM_SUBSCRIPTIONS}
-                      WHERE s.id = $1 AND s.user_id = $2`,
+                const locked = await client.query(
+                    `SELECT s.status, s.subscription_type, s.billing_period, s.price, s.payment_method_id, p.time_zone
+                       FROM subscriptions s JOIN profiles p ON p.id = s.user_id
+                      WHERE s.id = $1 AND s.user_id = $2
+                      FOR UPDATE OF s`,
                     [id, userId],
                 );
-                if (rows.length === 0) return null;
-                const row = rows[0];
+                if (locked.rowCount !== 1) throw new NotFoundError();
+                const sub = locked.rows[0];
+
+                // A repeated request (same key) gets the current state back and records nothing (SEC-041).
+                const seen = await client.query("SELECT 1 FROM billing WHERE subscription_id = $1 AND idempotency_key = $2", [id, ctx.idempotencyKey]);
+                if (seen.rowCount === 1) {
+                    return { subscription: (await selectDetail(client, userId, id))!, statusChanged: false, replayed: true, payments: 0 };
+                }
+
+                const current = await client.query("SELECT due_date FROM billing WHERE subscription_id = $1 ORDER BY due_date DESC LIMIT 1", [id]);
+                if (current.rowCount !== 1) throw new ConflictError("This subscription has no billing cycle to renew");
+
+                let plan;
+                try {
+                    plan = planRenewal(
+                        {
+                            status: sub.status,
+                            subscriptionType: sub.subscription_type,
+                            billingPeriod: sub.billing_period,
+                            currentDue: current.rows[0].due_date,
+                            today: localToday(sub.time_zone),
+                        },
+                        input.choice,
+                        input.billingPeriod,
+                    );
+                } catch (err) {
+                    if (err instanceof RenewalRefused) {
+                        throw err.kind === "conflict" ? new ConflictError(err.message) : new ValidationError(err.message, err.field);
+                    }
+                    throw err;
+                }
+
+                // A new payment method must be the caller's own and active, like on create.
+                if (input.paymentMethodId !== undefined) {
+                    const method = await client.query("SELECT 1 FROM payment_methods WHERE id = $1 AND user_id = $2 AND is_active", [input.paymentMethodId, userId]);
+                    if (method.rowCount !== 1) throw new ValidationError("Choose one of your active payment methods", "paymentMethodId");
+                }
+                // What changed applies going forward: catch-up cycles keep the old values.
+                const price = input.cost !== undefined ? input.cost.toFixed(2) : sub.price;
+                const paymentMethodId = input.paymentMethodId ?? sub.payment_method_id;
+
+                // New rows only; earlier cycles, lapsed or not, are never touched (BR-005, BR-021).
+                // The key goes on the first row; UNIQUE (subscription_id, due_date) backs up a
+                // second request that carries a different key.
+                for (const [i, cycle] of plan.cycles.entries()) {
+                    await client.query(
+                        `INSERT INTO billing (subscription_id, user_id, amount, payment_method_id, status, due_date, created_by, request_id, idempotency_key)
+                         VALUES ($1, $2, $3, $4, 'paid', $5, 'user', $6, $7)`,
+                        [
+                            id, userId,
+                            cycle.catchUp ? sub.price : price,
+                            cycle.catchUp ? sub.payment_method_id : paymentMethodId,
+                            cycle.dueDate, ctx.requestId, i === 0 ? ctx.idempotencyKey : null,
+                        ],
+                    );
+                }
+                await client.query(
+                    `UPDATE subscriptions
+                        SET status = 'active', price = $3, payment_method_id = $4, billing_period = $5,
+                            start_date = COALESCE($6::date, start_date), updated_at = now()
+                      WHERE id = $1 AND user_id = $2`,
+                    [id, userId, price, paymentMethodId, input.billingPeriod ?? sub.billing_period, plan.newStartDate ?? null],
+                );
                 return {
-                    ...toListItem(row),
-                    renewalLink: row.renewal_link,
-                    cancellationLink: row.cancellation_link,
-                    startDate: row.start_date,
-                    createdAt: row.created_at,
-                    updatedAt: row.updated_at,
+                    subscription: (await selectDetail(client, userId, id))!,
+                    statusChanged: sub.status !== "active",
+                    replayed: false,
+                    payments: plan.cycles.length,
                 };
             });
         },
@@ -236,6 +328,38 @@ export function createSubscriptionRepository(pool: pg.Pool) {
 }
 
 export type SubscriptionRepository = ReturnType<typeof createSubscriptionRepository>;
+
+// One of the caller's subscriptions with what "I renewed" would do, or null. Someone else's id and
+// a missing id look the same. Runs inside the caller's user-context transaction.
+async function selectDetail(client: pg.PoolClient, userId: string, id: string): Promise<SubscriptionDetail | null> {
+    const { rows } = await client.query(
+        `SELECT ${LIST_COLUMNS}, s.renewal_link, s.cancellation_link, s.start_date, s.created_at, s.updated_at, u.time_zone
+           ${FROM_SUBSCRIPTIONS}
+           JOIN profiles u ON u.id = s.user_id
+          WHERE s.id = $1 AND s.user_id = $2`,
+        [id, userId],
+    );
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    const item = toListItem(row);
+    return {
+        ...item,
+        renewalLink: row.renewal_link,
+        cancellationLink: row.cancellation_link,
+        startDate: row.start_date,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        ...(item.currentCycle && {
+            renewal: renewalInfo({
+                status: item.status,
+                subscriptionType: item.subscriptionType,
+                billingPeriod: item.billingPeriod,
+                currentDue: item.currentCycle.dueDate,
+                today: localToday(row.time_zone),
+            }),
+        }),
+    };
+}
 
 // One subscription that may need a renewal reminder, with its owner's address and time zone.
 export interface ReminderCandidate {

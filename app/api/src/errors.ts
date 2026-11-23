@@ -27,6 +27,14 @@ export class NotFoundError extends AppError {
     }
 }
 
+// The request is valid, but the resource's current state does not allow it (for example renewing
+// a cancelled subscription).
+export class ConflictError extends AppError {
+    constructor(message: string) {
+        super(409, "CONFLICT", message)
+    }
+}
+
 export class ForbiddenError extends AppError {
     constructor(){
         super(403, "FORBIDDEN", "Forbidden")

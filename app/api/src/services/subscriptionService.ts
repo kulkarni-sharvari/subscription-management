@@ -1,11 +1,11 @@
 import { addBillingPeriod } from "../domain/billingDates.js";
 import { NotFoundError } from "../errors.js";
-import type { NewSubscription, PageKey, SubscriptionRepository, SubscriptionStatus } from "../repositories/subscriptionRepository.js";
+import type { NewSubscription, PageKey, RenewalInput, SubscriptionRepository, SubscriptionStatus } from "../repositories/subscriptionRepository.js";
 import type { NotificationService } from "./notificationService.js";
 
 export function createSubscriptionService(deps: {
     subscriptions: SubscriptionRepository;
-    notifications: Pick<NotificationService, "subscriptionsAdded">;
+    notifications: Pick<NotificationService, "subscriptionsAdded" | "subscriptionRenewed">;
 }) {
     return {
         // FR-010 to FR-013, FR-044. The status is never an input: a new subscription is always active.
@@ -34,6 +34,18 @@ export function createSubscriptionService(deps: {
             const found = await deps.subscriptions.findById(userId, id);
             if (!found) throw new NotFoundError();
             return found;
+        },
+
+        // Story 6, FR-031: "I renewed". The email goes out only when the status changed, and never
+        // for a repeated request; like on create it is best effort and cannot undo the renewal.
+        async renew(userId: string, id: string, input: RenewalInput, ctx: { requestId: string; idempotencyKey: string }) {
+            const result = await deps.subscriptions.renew(userId, id, input, ctx);
+            if (result.statusChanged && !result.replayed) {
+                deps.notifications.subscriptionRenewed(userId, result.subscription, result.payments).catch((err: unknown) => {
+                    console.error("subscription-renewed email failed", { userId, reason: err instanceof Error ? err.message : "unknown" });
+                });
+            }
+            return result.subscription;
         },
     };
 }
