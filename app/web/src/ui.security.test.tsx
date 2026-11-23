@@ -282,3 +282,57 @@ describe('Story 6: "I renewed"', () => {
   })
 })
 
+describe('Story 7: "I cancelled"', () => {
+  const sub = (over: Record<string, unknown> = {}) => ({
+    ...item({ name: 'Netflix', category: 'TV', status: 'active-unknown', currentCycle: { dueDate: '2026-11-01', status: 'due' } }),
+    renewalLink: null,
+    cancellationLink: 'javascript:alert(1)',
+    startDate: '2026-01-01',
+    cancelledOn: null,
+    createdAt: '2026-01-01',
+    updatedAt: '2026-01-01',
+    renewal: { allowed: true, missedDates: ['2026-11-01'], nextDueIfPaidAll: '2026-12-01' },
+    ...over,
+  })
+  function fakeCancelApi(detail: object) {
+    const calls: Array<{ method: string; url: string; body?: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        calls.push({ method: init.method ?? 'GET', url, body: init.body as string | undefined })
+        const body = url.endsWith('/cancel') ? { ...detail, status: 'inactive', cancelledOn: '2026-11-23', renewal: { allowed: false, reason: 'inactive' } } : detail
+        return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+    return calls
+  }
+
+  it('asks for confirmation first, then sends a bodiless POST and shows the cancelled state', async () => {
+    const calls = fakeCancelApi(sub())
+    show(`/subscriptions/${ID}`)
+    fireEvent.click(await screen.findByRole('button', { name: 'I cancelled' }))
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, I cancelled it' }))
+    expect(await screen.findByText(/Cancellation recorded/)).toBeTruthy()
+    const posts = calls.filter((c) => c.method === 'POST')
+    expect(posts).toEqual([{ method: 'POST', url: `/api/v1/subscriptions/${ID}/cancel`, body: undefined }])
+    expect(screen.getByText('2026-11-23')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'I cancelled' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'I renewed' })).toBeNull()
+  })
+
+  it('SEC-035: a stored javascript: cancellation link in the confirmation is shown as text, not a link', async () => {
+    fakeCancelApi(sub())
+    const { container } = show(`/subscriptions/${ID}`)
+    fireEvent.click(await screen.findByRole('button', { name: 'I cancelled' }))
+    expect(container.querySelector('a[href^="javascript"]')).toBeNull()
+  })
+
+  it('an inactive subscription offers no cancel button', async () => {
+    fakeCancelApi(sub({ status: 'inactive', cancelledOn: '2026-11-20', renewal: { allowed: false, reason: 'inactive' } }))
+    show(`/subscriptions/${ID}`)
+    expect(await screen.findByText('2026-11-20')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'I cancelled' })).toBeNull()
+  })
+})
+

@@ -31,6 +31,8 @@ export interface SubscriptionDetail extends Subscription {
   startDate: string
   createdAt: string
   updatedAt: string
+  // The day a cancellation was recorded (Story 7); null unless inactive.
+  cancelledOn: string | null
   // What "I renewed" can do now (Story 6). Worked out by the API in the user's time zone.
   renewal?: RenewalInfo
 }
@@ -91,6 +93,8 @@ export function listSubscriptions(status: SubscriptionStatus, cursor?: string | 
 }
 export const getSubscription = (id: string) => api.get<SubscriptionDetail>(`/subscriptions/${encodeURIComponent(id)}`)
 export const createSubscription = (body: NewSubscription) => api.post<Subscription>('/subscriptions', body)
+// No body: the API records the cancellation date itself.
+export const cancelSubscription = (id: string) => api.post<SubscriptionDetail>(`/subscriptions/${encodeURIComponent(id)}/cancel`)
 // `key` is one UUID per renewal attempt, reused on a retry, so a double submit records once (SEC-041).
 export const renewSubscription = (id: string, body: RenewalRequest, key: string) =>
   api.post<SubscriptionDetail>(`/subscriptions/${encodeURIComponent(id)}/renew`, body, { 'Idempotency-Key': key })

@@ -48,6 +48,8 @@ export interface SubscriptionDetail extends SubscriptionListItem {
     startDate: string;
     createdAt: Date;
     updatedAt: Date;
+    // The day the user recorded a cancellation (Story 7); null unless inactive.
+    cancelledOn: string | null;
     // Whether "I renewed" applies now, and what it would record (Story 6). Set on reads of one
     // subscription; absent right after creating one.
     renewal?: RenewalInfo;
@@ -211,6 +213,7 @@ export function createSubscriptionRepository(pool: pg.Pool) {
                     renewalLink: input.renewalLink,
                     cancellationLink: input.cancellationLink,
                     startDate: input.startDate,
+                    cancelledOn: null,
                     createdAt: created.createdAt,
                     updatedAt: created.updatedAt,
                 };
@@ -240,6 +243,28 @@ export function createSubscriptionRepository(pool: pg.Pool) {
         // One of the caller's subscriptions, or null. Someone else's id and a missing id look the same.
         async findById(userId: string, id: string): Promise<SubscriptionDetail | null> {
             return withUserContext(pool, userId, (client) => selectDetail(client, userId, id));
+        },
+
+        // Story 7, FR-032: "I cancelled". The subscription becomes inactive and is kept (BR-009);
+        // no billing row changes: a lapsed cycle stays due (unpaid), a current one stays paid.
+        // The row is locked, so a double click or a lapse at the same moment waits; the second
+        // click then finds it inactive (409) and nothing is sent twice.
+        async cancel(userId: string, id: string): Promise<SubscriptionDetail> {
+            return withUserContext(pool, userId, async (client) => {
+                const locked = await client.query(
+                    `SELECT s.status, p.time_zone FROM subscriptions s JOIN profiles p ON p.id = s.user_id
+                      WHERE s.id = $1 AND s.user_id = $2 FOR UPDATE OF s`,
+                    [id, userId],
+                );
+                if (locked.rowCount !== 1) throw new NotFoundError();
+                if (locked.rows[0].status === "inactive") throw new ConflictError("This subscription is already cancelled");
+                await client.query(
+                    `UPDATE subscriptions SET status = 'inactive', cancelled_on = $3::date, updated_at = now()
+                      WHERE id = $1 AND user_id = $2`,
+                    [id, userId, localToday(locked.rows[0].time_zone)],
+                );
+                return (await selectDetail(client, userId, id))!;
+            });
         },
 
         // Story 6, FR-031: "I renewed". One transaction with the subscription row locked, so a
@@ -333,7 +358,7 @@ export type SubscriptionRepository = ReturnType<typeof createSubscriptionReposit
 // a missing id look the same. Runs inside the caller's user-context transaction.
 async function selectDetail(client: pg.PoolClient, userId: string, id: string): Promise<SubscriptionDetail | null> {
     const { rows } = await client.query(
-        `SELECT ${LIST_COLUMNS}, s.renewal_link, s.cancellation_link, s.start_date, s.created_at, s.updated_at, u.time_zone
+        `SELECT ${LIST_COLUMNS}, s.renewal_link, s.cancellation_link, s.start_date, s.created_at, s.updated_at, s.cancelled_on, u.time_zone
            ${FROM_SUBSCRIPTIONS}
            JOIN profiles u ON u.id = s.user_id
           WHERE s.id = $1 AND s.user_id = $2`,
@@ -349,6 +374,7 @@ async function selectDetail(client: pg.PoolClient, userId: string, id: string): 
         startDate: row.start_date,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
+        cancelledOn: row.cancelled_on,
         ...(item.currentCycle && {
             renewal: renewalInfo({
                 status: item.status,

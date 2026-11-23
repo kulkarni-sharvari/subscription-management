@@ -10,6 +10,7 @@ import {
   PAYMENT_METHOD_LABEL,
   PERIOD_LABEL,
   previewDueDate,
+  cancelSubscription,
   renewSubscription,
   type BillingPeriod,
   type PaymentMethod,
@@ -200,28 +201,83 @@ function RenewForm({ sub, missedDates, onDone, onCancel }: { sub: Detail; missed
   )
 }
 
-// What the detail page offers for renewing: an explanation, the button, or when it opens.
-function RenewSection({ sub, onRenewed }: { sub: Detail; onRenewed: (updated: Detail) => void }) {
-  const [open, setOpen] = useState(false)
-  const renewal = sub.renewal
-  if (!renewal) return null
-  if (!renewal.allowed) {
-    return renewal.reason === 'too_early' ? (
-      <p className="muted">You can record this renewal from {renewal.opensOn}, 5 days before it renews.</p>
-    ) : null
+// "I cancelled" (Story 7): the confirmation step. If a cancellation link is saved it is offered
+// first: recording a cancellation here does not cancel anything with the provider.
+function CancelConfirm({ sub, onDone, onBack }: { sub: Detail; onDone: (updated: Detail) => void; onBack: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function confirm() {
+    setBusy(true)
+    setError(null)
+    try {
+      onDone(await cancelSubscription(sub.id))
+    } catch (err) {
+      setError(toFormError(err).message)
+      setBusy(false)
+    }
   }
-  if (open) return <RenewForm sub={sub} missedDates={renewal.missedDates} onCancel={() => setOpen(false)} onDone={(u) => { setOpen(false); onRenewed(u) }} />
+
   return (
-    <div className="stack">
-      {sub.status === 'active-unknown' && (
-        <p className="alert-warning">
-          The renewal date ({renewal.missedDates[0]}) passed and you have not recorded what happened. If it renewed, record the renewal so its
-          dates and costs stay accurate.
+    <div className="stack" role="group" aria-label="Record a cancellation">
+      <p>
+        Mark <strong>{sub.name}</strong> as cancelled? It moves to Inactive, reminders stop, and its history is kept.
+      </p>
+      {sub.cancellationLink && (
+        <p className="muted">
+          This only records it here. Cancel with the provider first: <SafeLink href={sub.cancellationLink} />
         </p>
       )}
-      <div>
-        <button type="button" className="btn-primary" onClick={() => setOpen(true)}>
-          I renewed
+      {error && (
+        <p role="alert" className="alert-error">
+          {error}
+        </p>
+      )}
+      <div className="flex gap-3">
+        <button type="button" className="btn-danger" onClick={() => void confirm()} disabled={busy}>
+          {busy ? 'Saving…' : 'Yes, I cancelled it'}
+        </button>
+        <button type="button" className="btn-secondary" onClick={onBack} disabled={busy}>
+          Back
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// What the detail page offers: the explanation, then "I renewed" and "I cancelled" on one line,
+// right-aligned. Opening one replaces the line with its form.
+function Actions({ sub, onRenewed, onCancelled }: { sub: Detail; onRenewed: (u: Detail) => void; onCancelled: (u: Detail) => void }) {
+  const [mode, setMode] = useState<'idle' | 'renewing' | 'cancelling'>('idle')
+  if (sub.status === 'inactive') return null
+  const renewal = sub.renewal
+  const canRenew = renewal?.allowed === true
+
+  if (mode === 'renewing' && renewal?.allowed) {
+    return <RenewForm sub={sub} missedDates={renewal.missedDates} onCancel={() => setMode('idle')} onDone={(u) => { setMode('idle'); onRenewed(u) }} />
+  }
+  if (mode === 'cancelling') {
+    return <CancelConfirm sub={sub} onBack={() => setMode('idle')} onDone={(u) => { setMode('idle'); onCancelled(u) }} />
+  }
+  return (
+    <div className="stack">
+      {sub.status === 'active-unknown' && renewal?.allowed && (
+        <p className="alert-warning">
+          The renewal date ({renewal.missedDates[0]}) passed and you have not recorded what happened. Record whether it renewed or you
+          cancelled it, so its dates and costs stay accurate.
+        </p>
+      )}
+      {renewal && !renewal.allowed && renewal.reason === 'too_early' && (
+        <p className="muted">You can record this renewal from {renewal.opensOn}, 5 days before it renews.</p>
+      )}
+      <div className="action-row">
+        {canRenew && (
+          <button type="button" className="btn-primary" onClick={() => setMode('renewing')}>
+            I renewed
+          </button>
+        )}
+        <button type="button" className="btn-danger" onClick={() => setMode('cancelling')}>
+          I cancelled
         </button>
       </div>
     </div>
@@ -301,6 +357,12 @@ export default function SubscriptionDetail() {
             <dd>{current.subscription.currentCycle?.dueDate ?? '—'}</dd>
             <dt>Payment method</dt>
             <dd>{PAYMENT_METHOD_LABEL[current.subscription.paymentMethod.type]}</dd>
+            {current.subscription.cancelledOn && (
+              <>
+                <dt>Cancelled on</dt>
+                <dd>{current.subscription.cancelledOn}</dd>
+              </>
+            )}
             <dt>Renews automatically</dt>
             <dd>{current.subscription.autoRenews ? 'Yes' : 'No'}</dd>
             <dt>Renewal link</dt>
@@ -317,11 +379,15 @@ export default function SubscriptionDetail() {
               {notice}
             </p>
           )}
-          <RenewSection
+          <Actions
             sub={current.subscription}
             onRenewed={(updated) => {
               setState({ kind: 'ready', id, subscription: updated })
               setNotice(`Renewal recorded. Next renewal: ${updated.currentCycle?.dueDate ?? '—'}.`)
+            }}
+            onCancelled={(updated) => {
+              setState({ kind: 'ready', id, subscription: updated })
+              setNotice('Cancellation recorded. It is now inactive and you will get no more reminders for it.')
             }}
           />
         </div>

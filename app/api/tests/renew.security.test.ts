@@ -97,7 +97,7 @@ describe("SEC-047: the renewed email escapes every value", () => {
             {
                 id: "x", name: "<script>alert(1)</script>", category: "c", cost: 5, billingPeriod: "monthly", subscriptionType: "recurring", status: "active",
                 autoRenews: false, paymentMethod: { id: "p", type: "credit_card" }, currentCycle: { dueDate: "2027-01-01", status: "paid" },
-                renewalLink: null, cancellationLink: null, startDate: "2026-01-01", createdAt: new Date(), updatedAt: new Date(),
+                renewalLink: null, cancellationLink: null, startDate: "2026-01-01", cancelledOn: null, createdAt: new Date(), updatedAt: new Date(),
             },
             1,
         );

@@ -156,7 +156,7 @@ export default function Home() {
         <>
           {status === 'active-unknown' && (
             <p className="alert-warning">
-              These renewal dates passed and nothing was recorded. Open one and record whether it renewed, so its dates and costs stay accurate.
+              These renewal dates passed and nothing was recorded. Open one and record whether it renewed or you cancelled it, so its dates and costs stay accurate.
             </p>
           )}
           <ul className="sub-list">

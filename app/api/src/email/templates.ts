@@ -181,3 +181,18 @@ export function subscriptionRenewedEmail(sub: SubscriptionDetail, payments: numb
     return { subject, html, text };
 }
 
+// The status-change email for "I cancelled" (Story 7, FR-034): one per action.
+export function subscriptionCancelledEmail(sub: SubscriptionDetail): EmailContent {
+    const subject = `Cancellation recorded: ${sub.name}`;
+    const intro = "You recorded a cancellation. The subscription is now inactive: no more reminders, and its history is kept.";
+    const rows: Array<[string, string]> = [
+        ["Name", sub.name],
+        ["Cost", sub.cost.toFixed(2)],
+        ["Billing", sub.billingPeriod ? PERIOD_LABEL[sub.billingPeriod] : "One-time purchase"],
+        ["Cancelled on", sub.cancelledOn ?? ""],
+    ];
+    const html = `<p>${escapeHtml(intro)}</p>` + htmlTable(rows);
+    const text = [intro, "", ...rows.map(([label, value]) => `${label}: ${value}`)].join("\n");
+    return { subject, html, text };
+}
+

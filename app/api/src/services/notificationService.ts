@@ -1,5 +1,5 @@
 import type pg from "pg";
-import { renewalDigestEmail, subscriptionRenewedEmail, subscriptionsAddedEmail, type DigestItem, type OverdueItem } from "../email/templates.js";
+import { renewalDigestEmail, subscriptionCancelledEmail, subscriptionRenewedEmail, subscriptionsAddedEmail, type DigestItem, type OverdueItem } from "../email/templates.js";
 import { reserveEmailSlot } from "../repositories/notificationLogRepository.js";
 import type { ProfileRepository } from "../repositories/profileRepository.js";
 import type { SubscriptionDetail } from "../repositories/subscriptionRepository.js";
@@ -30,6 +30,17 @@ export function createNotificationService(deps: {
                 return;
             }
             await deps.email.send({ to: profile.email, ...subscriptionsAddedEmail(subscriptions) });
+        },
+
+        // "I cancelled" (Story 7): one email for the action.
+        async subscriptionCancelled(userId: string, subscription: SubscriptionDetail): Promise<void> {
+            const profile = await deps.profiles.findById(userId);
+            if (!profile) return;
+            if (!(await deps.reserveSlot(userId))) {
+                console.warn("email not sent: daily cap reached", { userId, kind: "subscription_cancelled" });
+                return;
+            }
+            await deps.email.send({ to: profile.email, ...subscriptionCancelledEmail(subscription) });
         },
 
         // "I renewed" brought a subscription back to active (Story 6): one email for the action.

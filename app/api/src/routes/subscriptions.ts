@@ -145,6 +145,15 @@ export function createSubscriptionsRouter(service: SubscriptionService, limiters
         res.json(await service.get(req.userId, id.data));
     });
 
+    // Story 7: "I cancelled". No body at all: nothing about the cancellation is the client's to choose.
+    router.post("/:id/cancel", limiters.writes, async (req, res) => {
+        if (!req.userId) throw new UnauthorizedError();
+        const id = z.uuid().safeParse(req.params.id);
+        if (!id.success) throw new NotFoundError();
+        parse(z.strictObject({}), req.body ?? {});
+        res.json(await service.cancel(req.userId, id.data));
+    });
+
     router.post("/:id/renew", limiters.writes, async (req, res) => {
         if (!req.userId) throw new UnauthorizedError();
         const id = z.uuid().safeParse(req.params.id);
