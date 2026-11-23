@@ -105,6 +105,9 @@
   .alert-success {
     @apply border-success-700/30 bg-success-50 text-success-700;
   }
+  .alert-warning {
+    @apply rounded-control border border-warning-600/40 bg-warning-50 px-3 py-2 text-sm text-warning-700;
+  }
 
   /* App shell */
   .app-header {
@@ -123,6 +126,9 @@
   }
   .radio-group {
     @apply flex flex-wrap gap-x-6 gap-y-2;
+  }
+  .radio-stack {
+    @apply flex flex-col gap-2;
   }
   .radio-row,
   .check-row {

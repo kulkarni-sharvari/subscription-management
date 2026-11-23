@@ -154,6 +154,11 @@ export default function Home() {
 
       {current.kind === 'ready' && current.items.length > 0 && (
         <>
+          {status === 'active-unknown' && (
+            <p className="alert-warning">
+              These renewal dates passed and nothing was recorded. Open one and record whether it renewed, so its dates and costs stay accurate.
+            </p>
+          )}
           <ul className="sub-list">
             {current.items.map((sub) => (
               <li key={sub.id} className={sub.status === 'active-unknown' ? 'sub-row sub-row-attention' : 'sub-row'}>

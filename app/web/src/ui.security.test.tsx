@@ -1,6 +1,6 @@
 // SEC-036 and SEC-035 in the browser: user text renders as text, links are safe, and the address
 // bar cannot choose what the page asks the API for. The API is a fake fetch; nothing leaves the test.
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AuthProvider } from './auth/AuthProvider'
@@ -169,3 +169,116 @@ describe("Story 4: the browser reports the user's time zone", () => {
     expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0)
   })
 })
+
+describe('Story 6: "I renewed"', () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+  const detail = (over: Record<string, unknown> = {}) => ({
+    ...item({ name: 'Netflix', category: 'TV', status: 'active-unknown', currentCycle: { dueDate: '2026-11-01', status: 'due' } }),
+    renewalLink: null,
+    cancellationLink: null,
+    startDate: '2026-01-01',
+    createdAt: '2026-01-01',
+    updatedAt: '2026-01-01',
+    renewal: { allowed: true, missedDates: ['2026-11-01'], nextDueIfPaidAll: '2026-12-01' },
+    ...over,
+  })
+  type Call = { method: string; url: string; headers: Record<string, string>; body?: unknown }
+
+  // Answers the detail, the payment methods and the renew call; `renewStatuses` sets the renew
+  // answers in order (the last repeats). Records every request.
+  function fakeRenewApi(sub: object, renewStatuses: number[] = [200]) {
+    const calls: Call[] = []
+    let renews = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        calls.push({
+          method: init.method ?? 'GET',
+          url,
+          headers: (init.headers ?? {}) as Record<string, string>,
+          body: init.body ? JSON.parse(init.body as string) : undefined,
+        })
+        const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+        if (url.endsWith('/renew')) {
+          const status = renewStatuses[Math.min(renews++, renewStatuses.length - 1)]
+          if (status !== 200) return json({ error: { code: 'INTERNAL', message: 'Something went wrong. Please try again.' } }, status)
+          return json({ ...sub, status: 'active', currentCycle: { dueDate: '2026-12-01', status: 'paid' }, renewal: { allowed: false, reason: 'too_early', opensOn: '2026-11-26' } })
+        }
+        if (url.endsWith('/payment-methods')) {
+          return json([
+            { id: 'p1', type: 'credit_card', isActive: true, createdAt: '' },
+            { id: 'p2', type: 'debit_card', isActive: true, createdAt: '' },
+          ])
+        }
+        return json(sub)
+      }),
+    )
+    return calls
+  }
+  const renewCalls = (calls: Call[]) => calls.filter((c) => c.url.endsWith('/renew'))
+  const confirm = () => fireEvent.click(screen.getByRole('button', { name: 'Confirm renewal' }))
+
+  it('explains what is needed, sends a UUID Idempotency-Key and an empty body when nothing changed', async () => {
+    const calls = fakeRenewApi(detail())
+    show(`/subscriptions/${ID}`)
+    expect(await screen.findByText(/passed and you have not recorded what happened/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'I renewed' }))
+    await screen.findByRole('option', { name: 'Debit card' })
+    confirm()
+    expect(await screen.findByText('Renewal recorded. Next renewal: 2026-12-01.')).toBeTruthy()
+    const [call] = renewCalls(calls)
+    expect(call.method).toBe('POST')
+    expect(call.url).toBe(`/api/v1/subscriptions/${ID}/renew`)
+    expect(call.headers['Idempotency-Key']).toMatch(UUID)
+    expect(call.body).toEqual({})
+  })
+
+  it('SEC-041: a retry after a failure reuses the same key', async () => {
+    const calls = fakeRenewApi(detail(), [500, 200])
+    show(`/subscriptions/${ID}`)
+    fireEvent.click(await screen.findByRole('button', { name: 'I renewed' }))
+    confirm()
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    confirm()
+    await screen.findByText(/Renewal recorded/)
+    const keys = renewCalls(calls).map((c) => c.headers['Idempotency-Key'])
+    expect(keys).toHaveLength(2)
+    expect(keys[0]).toBe(keys[1])
+  })
+
+  it('only what changed is sent', async () => {
+    const calls = fakeRenewApi(detail())
+    show(`/subscriptions/${ID}`)
+    fireEvent.click(await screen.findByRole('button', { name: 'I renewed' }))
+    await screen.findByRole('option', { name: 'Debit card' })
+    fireEvent.change(screen.getByLabelText('Cost'), { target: { value: '19.99' } })
+    fireEvent.change(screen.getByLabelText('Payment method'), { target: { value: 'p2' } })
+    confirm()
+    await screen.findByText(/Renewal recorded/)
+    expect(renewCalls(calls)[0].body).toEqual({ cost: 19.99, paymentMethodId: 'p2' })
+  })
+
+  it('with several missed dates it asks what happened before sending anything', async () => {
+    const calls = fakeRenewApi(detail({ renewal: { allowed: true, missedDates: ['2026-09-01', '2026-10-01', '2026-11-01'], nextDueIfPaidAll: '2026-12-01' } }))
+    show(`/subscriptions/${ID}`)
+    fireEvent.click(await screen.findByRole('button', { name: 'I renewed' }))
+    expect(await screen.findByText(/3 renewal dates have passed/)).toBeTruthy()
+    confirm()
+    expect(await screen.findByText('Choose what happened')).toBeTruthy()
+    expect(renewCalls(calls)).toHaveLength(0)
+
+    fireEvent.click(screen.getByLabelText('I kept paying on every date'))
+    expect(screen.getByText(/Records 3 payments/)).toBeTruthy()
+    confirm()
+    await screen.findByText(/Renewal recorded/)
+    expect(renewCalls(calls)[0].body).toEqual({ missed: 'paid_all' })
+  })
+
+  it('too early: no button, only when it opens', async () => {
+    fakeRenewApi(detail({ status: 'active', currentCycle: { dueDate: '2026-12-20', status: 'paid' }, renewal: { allowed: false, reason: 'too_early', opensOn: '2026-12-15' } }))
+    show(`/subscriptions/${ID}`)
+    expect(await screen.findByText(/You can record this renewal from 2026-12-15/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'I renewed' })).toBeNull()
+  })
+})
+

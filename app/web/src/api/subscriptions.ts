@@ -31,6 +31,22 @@ export interface SubscriptionDetail extends Subscription {
   startDate: string
   createdAt: string
   updatedAt: string
+  // What "I renewed" can do now (Story 6). Worked out by the API in the user's time zone.
+  renewal?: RenewalInfo
+}
+
+export type RenewalInfo =
+  | { allowed: false; reason: 'inactive' | 'one_time' | 'too_early'; opensOn?: string }
+  // missedDates: renewal dates already passed, oldest first. More than one: ask what happened.
+  | { allowed: true; missedDates: string[]; nextDueIfPaidAll: string }
+
+// Only what changed is sent; the API works out the new cycles itself.
+export interface RenewalRequest {
+  cost?: number
+  paymentMethodId?: string
+  billingPeriod?: BillingPeriod
+  missed?: 'paid_all' | 'restarted'
+  restartDate?: string
 }
 
 // One page of a list. nextCursor is null on the last page; otherwise pass it back for the next one.
@@ -75,10 +91,20 @@ export function listSubscriptions(status: SubscriptionStatus, cursor?: string | 
 }
 export const getSubscription = (id: string) => api.get<SubscriptionDetail>(`/subscriptions/${encodeURIComponent(id)}`)
 export const createSubscription = (body: NewSubscription) => api.post<Subscription>('/subscriptions', body)
+// `key` is one UUID per renewal attempt, reused on a retry, so a double submit records once (SEC-041).
+export const renewSubscription = (id: string, body: RenewalRequest, key: string) =>
+  api.post<SubscriptionDetail>(`/subscriptions/${encodeURIComponent(id)}/renew`, body, { 'Idempotency-Key': key })
 
 // One currency for the whole app (BR-011). Change it here if the account currency changes.
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 export const formatMoney = (value: number) => money.format(value)
+
+// Today as YYYY-MM-DD in the user's own calendar (not UTC, which can be a day off in the evening).
+export function localToday(): string {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
 
 // Dates travel as plain YYYY-MM-DD text and are shown as written, so no time zone can move the day.
 const MONTHS_PER_PERIOD: Record<BillingPeriod, number> = { monthly: 1, '6_months': 6, annually: 12 }

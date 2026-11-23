@@ -1,14 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router'
 import { ApiError, toFormError } from '../api/client'
 import {
   formatMoney,
   getSubscription,
+  isValidIsoDate,
+  listPaymentMethods,
+  localToday,
   PAYMENT_METHOD_LABEL,
   PERIOD_LABEL,
+  previewDueDate,
+  renewSubscription,
+  type BillingPeriod,
+  type PaymentMethod,
+  type RenewalRequest,
   type SubscriptionDetail as Detail,
 } from '../api/subscriptions'
 import { AppShell } from '../components/AppShell'
+import { FormField, SelectField } from '../components/FormField'
 
 const STATUS_LABEL = { active: 'Active', 'active-unknown': 'Needs action', inactive: 'Inactive' } as const
 
@@ -31,9 +40,198 @@ function SafeLink({ href }: { href: string | null }) {
   )
 }
 
+const COST_PATTERN = /^\d{1,8}(\.\d{1,2})?$/
+
+interface RenewValues {
+  missed: '' | 'paid_all' | 'restarted'
+  restartDate: string
+  cost: string
+  paymentMethodId: string
+  billingPeriod: BillingPeriod
+}
+type RenewErrors = Partial<Record<keyof RenewValues, string>>
+
+// The "I renewed" form (Story 6). It asks "what happened?" only when more than one renewal date
+// has passed, and sends only what changed. The API checks everything again and works out the
+// new cycles itself; the dates shown here are a preview.
+function RenewForm({ sub, missedDates, onDone, onCancel }: { sub: Detail; missedDates: string[]; onDone: (updated: Detail) => void; onCancel: () => void }) {
+  // One key per attempt, kept across retries: a double click or a retry after a network error
+  // records one renewal (SEC-041). Opening the form again starts a new attempt.
+  const [key] = useState(() => crypto.randomUUID())
+  const [values, setValues] = useState<RenewValues>({
+    missed: '',
+    restartDate: '',
+    cost: String(sub.cost),
+    paymentMethodId: sub.paymentMethod.id,
+    billingPeriod: sub.billingPeriod ?? 'monthly',
+  })
+  const [methods, setMethods] = useState<PaymentMethod[] | null>(null)
+  const [errors, setErrors] = useState<RenewErrors>({})
+  const [formError, setFormError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const severalMissed = missedDates.length > 1
+  const today = localToday()
+
+  useEffect(() => {
+    let cancelled = false
+    listPaymentMethods()
+      .then((list) => {
+        if (!cancelled) setMethods(list)
+      })
+      .catch(() => {
+        if (!cancelled) setMethods([]) // the current method is still offered below
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  // Active methods, plus the current one even if it was deactivated since.
+  const choices = (methods ?? []).filter((m) => m.isActive || m.id === sub.paymentMethod.id)
+  if (!choices.some((m) => m.id === sub.paymentMethod.id)) choices.unshift({ id: sub.paymentMethod.id, type: sub.paymentMethod.type, isActive: true, createdAt: '' })
+
+  const set = <K extends keyof RenewValues>(name: K, value: RenewValues[K]) => setValues((v) => ({ ...v, [name]: value }))
+
+  function validate(): RenewErrors {
+    const e: RenewErrors = {}
+    if (severalMissed && !values.missed) e.missed = 'Choose what happened'
+    if (values.missed === 'restarted') {
+      if (!isValidIsoDate(values.restartDate)) e.restartDate = 'Enter the date you restarted'
+      else if (values.restartDate <= missedDates[0] || values.restartDate > today) e.restartDate = `The date must be after ${missedDates[0]} and not in the future`
+    }
+    const cost = values.cost.trim()
+    if (!COST_PATTERN.test(cost)) e.cost = 'Enter the cost as a number with at most 2 decimal places'
+    else if (Number(cost) <= 0) e.cost = 'The cost must be greater than 0'
+    return Object.fromEntries(Object.entries(e).filter(([, m]) => m)) as RenewErrors
+  }
+
+  // What the user will see after saving, before they confirm.
+  const lastPaidOn = missedDates.at(-1) ?? sub.currentCycle?.dueDate
+  let preview = ''
+  if (values.missed === 'restarted') preview = isValidIsoDate(values.restartDate) ? 'Payments are recorded from the restart date; the time before it stays unpaid.' : ''
+  else if (lastPaidOn && (!severalMissed || values.missed === 'paid_all')) {
+    const payments = Math.max(missedDates.length, 1)
+    preview = `${payments === 1 ? 'Records 1 payment' : `Records ${payments} payments (${missedDates.join(', ')})`}. Next renewal: ${previewDueDate(lastPaidOn, values.billingPeriod)}.`
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    const found = validate()
+    setErrors(found)
+    setFormError(null)
+    if (Object.keys(found).length > 0) return
+
+    const body: RenewalRequest = {}
+    if (Number(values.cost) !== sub.cost) body.cost = Number(values.cost)
+    if (values.paymentMethodId !== sub.paymentMethod.id) body.paymentMethodId = values.paymentMethodId
+    if (values.billingPeriod !== sub.billingPeriod) body.billingPeriod = values.billingPeriod
+    if (values.missed) body.missed = values.missed
+    if (values.missed === 'restarted') body.restartDate = values.restartDate
+
+    setSubmitting(true)
+    try {
+      onDone(await renewSubscription(sub.id, body, key))
+    } catch (err) {
+      const { message, field } = toFormError(err)
+      if (field && field in values) setErrors({ [field]: message })
+      else setFormError(message)
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form className="stack" onSubmit={(e) => void submit(e)} noValidate aria-label="Record a renewal">
+      <h2 className="font-medium">Record a renewal</h2>
+
+      {severalMissed && (
+        <fieldset className="stack">
+          <legend className="label">
+            {missedDates.length} renewal dates have passed ({missedDates.join(', ')}). What happened?
+          </legend>
+          <div className="radio-stack">
+            <label className="radio-row">
+              <input type="radio" name="missed" checked={values.missed === 'paid_all'} onChange={() => set('missed', 'paid_all')} />
+              I kept paying on every date
+            </label>
+            <label className="radio-row">
+              <input type="radio" name="missed" checked={values.missed === 'restarted'} onChange={() => set('missed', 'restarted')} />
+              I stopped, then restarted on a date
+            </label>
+          </div>
+          {errors.missed && <p className="field-error">{errors.missed}</p>}
+          {values.missed === 'restarted' && (
+            <FormField label="Date you restarted" type="date" value={values.restartDate} min={missedDates[0]} max={today} error={errors.restartDate} onChange={(e) => set('restartDate', e.target.value)} />
+          )}
+        </fieldset>
+      )}
+
+      <p className="muted">Change these only if they changed. They apply from this renewal on{severalMissed ? '; earlier payments keep the old values' : ''}.</p>
+      <FormField label="Cost" inputMode="decimal" value={values.cost} error={errors.cost} onChange={(e) => set('cost', e.target.value)} />
+      <SelectField label="Payment method" value={values.paymentMethodId} error={errors.paymentMethodId} onChange={(e) => set('paymentMethodId', e.target.value)}>
+        {choices.map((m) => (
+          <option key={m.id} value={m.id}>
+            {PAYMENT_METHOD_LABEL[m.type]}
+            {m.id === sub.paymentMethod.id ? ' (current)' : ''}
+          </option>
+        ))}
+      </SelectField>
+      <SelectField label="Billing period" value={values.billingPeriod} onChange={(e) => set('billingPeriod', e.target.value as BillingPeriod)}>
+        {Object.entries(PERIOD_LABEL).map(([value, label]) => (
+          <option key={value} value={value}>
+            {label}
+          </option>
+        ))}
+      </SelectField>
+
+      {preview && <p className="muted">{preview}</p>}
+      {formError && (
+        <p role="alert" className="alert-error">
+          {formError}
+        </p>
+      )}
+      <div className="flex gap-3">
+        <button type="submit" className="btn-primary" disabled={submitting}>
+          {submitting ? 'Saving…' : 'Confirm renewal'}
+        </button>
+        <button type="button" className="btn-secondary" onClick={onCancel} disabled={submitting}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  )
+}
+
+// What the detail page offers for renewing: an explanation, the button, or when it opens.
+function RenewSection({ sub, onRenewed }: { sub: Detail; onRenewed: (updated: Detail) => void }) {
+  const [open, setOpen] = useState(false)
+  const renewal = sub.renewal
+  if (!renewal) return null
+  if (!renewal.allowed) {
+    return renewal.reason === 'too_early' ? (
+      <p className="muted">You can record this renewal from {renewal.opensOn}, 5 days before it renews.</p>
+    ) : null
+  }
+  if (open) return <RenewForm sub={sub} missedDates={renewal.missedDates} onCancel={() => setOpen(false)} onDone={(u) => { setOpen(false); onRenewed(u) }} />
+  return (
+    <div className="stack">
+      {sub.status === 'active-unknown' && (
+        <p className="alert-warning">
+          The renewal date ({renewal.missedDates[0]}) passed and you have not recorded what happened. If it renewed, record the renewal so its
+          dates and costs stay accurate.
+        </p>
+      )}
+      <div>
+        <button type="button" className="btn-primary" onClick={() => setOpen(true)}>
+          I renewed
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function SubscriptionDetail() {
   const { id = '' } = useParams()
   const [state, setState] = useState<DetailState>({ kind: 'loading', id })
+  const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -114,6 +312,18 @@ export default function SubscriptionDetail() {
               <SafeLink href={current.subscription.cancellationLink} />
             </dd>
           </dl>
+          {notice && (
+            <p role="status" className="alert-success">
+              {notice}
+            </p>
+          )}
+          <RenewSection
+            sub={current.subscription}
+            onRenewed={(updated) => {
+              setState({ kind: 'ready', id, subscription: updated })
+              setNotice(`Renewal recorded. Next renewal: ${updated.currentCycle?.dueDate ?? '—'}.`)
+            }}
+          />
         </div>
       )}
     </AppShell>

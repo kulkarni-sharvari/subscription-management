@@ -18,6 +18,7 @@ export class ApiError extends Error {
 interface RequestOptions {
   method?: string
   body?: unknown
+  headers?: Record<string, string>
 }
 
 // Told when a signed-in user's session can no longer be renewed (the AuthProvider listens).
@@ -29,12 +30,12 @@ export function setSessionEndedHandler(handler: (() => void) | null) {
 // A request with no answer after this long is abandoned, so a hung API cannot freeze the page.
 const REQUEST_TIMEOUT_MS = 10_000
 
-async function send(path: string, { method = 'GET', body }: RequestOptions): Promise<Response> {
+async function send(path: string, { method = 'GET', body, headers }: RequestOptions): Promise<Response> {
   try {
     return await fetch(`${BASE}${path}`, {
       method,
       credentials: 'same-origin', // tells browser to add cookies.
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
@@ -88,7 +89,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body }),
+  post: <T>(path: string, body?: unknown, headers?: Record<string, string>) => request<T>(path, { method: 'POST', body, headers }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body }),
 }
 

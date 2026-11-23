@@ -6,6 +6,7 @@ import {
   createSubscription,
   isValidIsoDate,
   listPaymentMethods,
+  localToday,
   PAYMENT_METHOD_LABEL,
   PERIOD_LABEL,
   previewDueDate,
@@ -31,13 +32,6 @@ interface Values {
   autoRenews: boolean
 }
 type Errors = Partial<Record<keyof Values, string>>
-
-// Today as YYYY-MM-DD in the user's own calendar (not UTC, which can be a day off in the evening).
-function today(): string {
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-}
 
 // These rules mirror the API's, so mistakes are caught before a request is sent. The API checks
 // everything again: this is for the user's convenience, not for security.
@@ -143,7 +137,7 @@ export default function AddSubscription() {
     category: '',
     subscriptionType: 'recurring',
     billingPeriod: 'monthly',
-    startDate: today(),
+    startDate: localToday(),
     cost: '',
     paymentMethodId: '',
     renewalLink: '',
