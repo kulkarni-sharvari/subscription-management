@@ -3,7 +3,7 @@ import { z } from "zod";
 import { isValidIsoDate } from "../domain/billingDates.js";
 import { NotFoundError, UnauthorizedError, ValidationError } from "../errors.js";
 import type { RateLimiters } from "../middleware/rateLimit.js";
-import { decodeCursor, type NewSubscription } from "../repositories/subscriptionRepository.js";
+import { decodeCursor, type NewSubscription, type SubscriptionEdit } from "../repositories/subscriptionRepository.js";
 import type { SubscriptionService } from "../services/subscriptionService.js";
 import { parse } from "../validation.js";
 
@@ -93,6 +93,23 @@ const renewBody = z
         if (body.missed !== "restarted" && body.restartDate) ctx.addIssue({ code: "custom", path: ["restartDate"], message: "A restart date goes only with \"restarted\"" });
     });
 
+// Story 8 edit: the editable fields only (FR-030), each optional, with the same rules as create.
+// strictObject: status, start date, due date, type or anything else is a 400 (SEC-030). An empty
+// link clears it. expectedUpdatedAt is the updatedAt the form loaded (optimistic concurrency).
+const editBody = z
+    .strictObject({
+        expectedUpdatedAt: z.iso.datetime({ offset: true, message: "expectedUpdatedAt must be the updatedAt you loaded" }),
+        name: text("subscription name", 100).optional(),
+        category: text("category", 50).optional(),
+        cost: cost.optional(),
+        billingPeriod: z.enum(["monthly", "6_months", "annually"], "Choose monthly, every 6 months or annually").optional(),
+        paymentMethodId: z.uuid("Choose a payment method").optional(),
+        renewalLink: link("renewal link"),
+        cancellationLink: link("cancellation link"),
+        autoRenews: z.boolean("Say whether it renews automatically").optional(),
+    })
+    .refine((body) => Object.keys(body).length > 1, { message: "Nothing to change" });
+
 // SEC-041: every renew carries a client-generated UUID, so a retry or double click records once.
 const idempotencyKey = z.uuid("Send an Idempotency-Key header with a UUID");
 
@@ -143,6 +160,22 @@ export function createSubscriptionsRouter(service: SubscriptionService, limiters
         const id = z.uuid().safeParse(req.params.id);
         if (!id.success) throw new NotFoundError();
         res.json(await service.get(req.userId, id.data));
+    });
+
+    // Story 8: edit details.
+    router.patch("/:id", limiters.writes, async (req, res) => {
+        if (!req.userId) throw new UnauthorizedError();
+        const id = z.uuid().safeParse(req.params.id);
+        if (!id.success) throw new NotFoundError();
+        const { expectedUpdatedAt, renewalLink, cancellationLink, ...rest } = parse(editBody, req.body ?? {});
+        // A link that was sent but is empty means "clear it"; one that was not sent stays as it is.
+        const sent = (key: string) => typeof req.body === "object" && req.body !== null && key in req.body;
+        const edit: SubscriptionEdit = {
+            ...rest,
+            ...(sent("renewalLink") && { renewalLink: renewalLink ?? null }),
+            ...(sent("cancellationLink") && { cancellationLink: cancellationLink ?? null }),
+        };
+        res.json(await service.update(req.userId, id.data, edit, expectedUpdatedAt));
     });
 
     // Story 7: "I cancelled". No body at all: nothing about the cancellation is the client's to choose.

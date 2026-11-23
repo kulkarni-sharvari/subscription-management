@@ -336,3 +336,106 @@ describe('Story 7: "I cancelled"', () => {
   })
 })
 
+describe('Story 8: editing details in place', () => {
+  const UPDATED_AT = '2026-11-20T10:00:00.123Z'
+  const sub = (over: Record<string, unknown> = {}) => ({
+    ...item({ name: 'Netflix', category: 'TV', status: 'active', currentCycle: { dueDate: '2026-12-08', status: 'paid' } }),
+    renewalLink: 'https://netflix.example/renew',
+    cancellationLink: null,
+    startDate: '2026-01-01',
+    cancelledOn: null,
+    createdAt: '2026-01-01',
+    updatedAt: UPDATED_AT,
+    renewal: { allowed: true, missedDates: [], nextDueIfPaidAll: '2027-01-08' },
+    ...over,
+  })
+  type Call = { method: string; url: string; body?: unknown }
+  // `patchStatus` is the answer to the save; GETs answer with the subscription.
+  function fakeEditApi(detail: object, patchStatus = 200) {
+    const calls: Call[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit = {}) => {
+        const method = init.method ?? 'GET'
+        calls.push({ method, url, body: init.body ? JSON.parse(init.body as string) : undefined })
+        const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+        if (url.endsWith('/payment-methods')) return json([{ id: 'p1', type: 'credit_card', isActive: true, createdAt: '' }])
+        if (method === 'PATCH') {
+          if (patchStatus === 409) return json({ error: { code: 'CONFLICT', message: 'This subscription changed since you opened it. Reload to see the latest.' } }, 409)
+          const body = JSON.parse(init.body as string)
+          return json({ ...detail, ...body, updatedAt: '2026-11-21T00:00:00.000Z' })
+        }
+        return json(detail)
+      }),
+    )
+    return calls
+  }
+  const patches = (calls: Call[]) => calls.filter((c) => c.method === 'PATCH')
+  const openEditor = async () => fireEvent.click(await screen.findByRole('button', { name: 'Edit details' }))
+
+  it('the pencil turns the details into inputs and swaps the actions for Update', async () => {
+    fakeEditApi(sub())
+    show(`/subscriptions/${ID}`)
+    expect(await screen.findByRole('button', { name: 'I renewed' })).toBeTruthy()
+    await openEditor()
+    expect(screen.getByRole('button', { name: 'Update' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'I renewed' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'I cancelled' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Edit details' })).toBeNull()
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Netflix')
+  })
+
+  it('sends only what changed, with the updatedAt it opened with', async () => {
+    const calls = fakeEditApi(sub())
+    show(`/subscriptions/${ID}`)
+    await openEditor()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Netflix Premium' } })
+    fireEvent.change(screen.getByLabelText('Cost'), { target: { value: '22.99' } })
+    fireEvent.change(screen.getByLabelText('Renewal link'), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }))
+    expect(await screen.findByText('Changes saved.')).toBeTruthy()
+    expect(patches(calls)).toEqual([
+      { method: 'PATCH', url: `/api/v1/subscriptions/${ID}`, body: { expectedUpdatedAt: UPDATED_AT, name: 'Netflix Premium', cost: 22.99, renewalLink: '' } },
+    ])
+    expect(screen.getByRole('heading', { name: 'Netflix Premium' })).toBeTruthy()
+  })
+
+  it('saving with nothing changed sends nothing and closes the editor', async () => {
+    const calls = fakeEditApi(sub())
+    show(`/subscriptions/${ID}`)
+    await openEditor()
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }))
+    expect(await screen.findByRole('button', { name: 'Edit details' })).toBeTruthy()
+    expect(patches(calls)).toHaveLength(0)
+  })
+
+  it('SEC-035: a javascript: link is refused before anything is sent', async () => {
+    const calls = fakeEditApi(sub())
+    show(`/subscriptions/${ID}`)
+    await openEditor()
+    fireEvent.change(screen.getByLabelText('Cancellation link'), { target: { value: 'javascript:alert(1)' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }))
+    expect(await screen.findByText('The cancellation link must be a valid http or https address')).toBeTruthy()
+    expect(patches(calls)).toHaveLength(0)
+  })
+
+  it('a stale save (409) says so and offers Reload, which loads the subscription again', async () => {
+    const calls = fakeEditApi(sub(), 409)
+    show(`/subscriptions/${ID}`)
+    await openEditor()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Other tab' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }))
+    expect(await screen.findByText(/changed since you opened it/)).toBeTruthy()
+    const getsBefore = calls.filter((c) => c.method === 'GET' && c.url === `/api/v1/subscriptions/${ID}`).length
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }))
+    await waitFor(() => expect(calls.filter((c) => c.method === 'GET' && c.url === `/api/v1/subscriptions/${ID}`).length).toBe(getsBefore + 1))
+  })
+
+  it('a one-time purchase has no billing period to edit', async () => {
+    fakeEditApi(sub({ billingPeriod: null, subscriptionType: 'one_time', renewal: { allowed: false, reason: 'one_time' } }))
+    show(`/subscriptions/${ID}`)
+    await openEditor()
+    expect(screen.queryByLabelText('Billing period')).toBeNull()
+  })
+})
+

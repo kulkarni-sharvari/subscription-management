@@ -401,10 +401,8 @@ describe.skipIf(!local)("Story 6 against the database", () => {
         });
 
         it.each([
-            "UPDATE subscriptions SET name = 'x'",
-            "UPDATE subscriptions SET category = 'x'",
+            // name, category and links became editable in Story 8 (migration 007; edit.security.test.ts).
             "UPDATE subscriptions SET user_id = gen_random_uuid()",
-            "UPDATE subscriptions SET renewal_link = 'https://x.example'",
             "UPDATE billing SET amount = 1",
             "UPDATE billing SET status = 'paid'",
             "DELETE FROM subscriptions",

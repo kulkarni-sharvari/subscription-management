@@ -2,6 +2,9 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { toFormError } from '../api/client'
 import {
+  checkCost,
+  checkLink,
+  checkText,
   createPaymentMethod,
   createSubscription,
   isValidIsoDate,
@@ -33,41 +36,13 @@ interface Values {
 }
 type Errors = Partial<Record<keyof Values, string>>
 
-// These rules mirror the API's, so mistakes are caught before a request is sent. The API checks
-// everything again: this is for the user's convenience, not for security.
-const hasControlCharacter = (value: string) => /\p{Cc}/u.test(value)
-
-function checkText(label: string, raw: string, max: number): string | undefined {
-  const value = raw.trim()
-  if (!value) return `Enter the ${label}`
-  if (value.length > max) return `The ${label} must be at most ${max} characters`
-  if (hasControlCharacter(value)) return `The ${label} contains characters that are not allowed`
-}
-
-function checkLink(label: string, raw: string): string | undefined {
-  const value = raw.trim()
-  if (!value) return undefined
-  const message = `The ${label} must be a valid http or https address`
-  if (value.length > 2048) return `The ${label} must be at most 2048 characters`
-  if (!/^https?:\/\//i.test(value)) return message
-  try {
-    const url = new URL(value)
-    if (url.username || url.password) return message
-  } catch {
-    return message
-  }
-}
-
-const COST_PATTERN = /^\d{1,8}(\.\d{1,2})?$/
 
 function validate(v: Values): Errors {
   const errors: Errors = {}
   errors.name = checkText('subscription name', v.name, 100)
   errors.category = checkText('category', v.category, 50)
 
-  const cost = v.cost.trim()
-  if (!COST_PATTERN.test(cost)) errors.cost = 'Enter the cost as a number with at most 2 decimal places'
-  else if (Number(cost) <= 0) errors.cost = 'The cost must be greater than 0'
+  errors.cost = checkCost(v.cost)
 
   if (!isValidIsoDate(v.startDate)) errors.startDate = 'Enter a valid start date'
   else if (v.startDate < '2000-01-01' || v.startDate > '2100-12-31') errors.startDate = 'The start date must be between 2000 and 2100'

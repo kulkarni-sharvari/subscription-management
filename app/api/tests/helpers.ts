@@ -116,6 +116,7 @@ export function buildTestApp({ keys, production = false, authService, profileExi
         get: vi.fn(async () => ({}) as never),
         renew: vi.fn(async () => ({}) as never),
         cancel: vi.fn(async () => ({}) as never),
+        update: vi.fn(async () => ({}) as never),
     };
     const app = createApp({
         corsOrigin: ORIGIN,

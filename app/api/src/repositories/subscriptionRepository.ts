@@ -55,6 +55,30 @@ export interface SubscriptionDetail extends SubscriptionListItem {
     renewal?: RenewalInfo;
 }
 
+// What an edit may change (Story 8, FR-030). Absent means unchanged; null clears a link.
+export interface SubscriptionEdit {
+    name?: string;
+    category?: string;
+    cost?: number;
+    billingPeriod?: BillingPeriod;
+    paymentMethodId?: string;
+    renewalLink?: string | null;
+    cancellationLink?: string | null;
+    autoRenews?: boolean;
+}
+
+// Each editable field and its column. A fixed map: a request value never becomes SQL (SEC-033).
+const EDIT_COLUMNS: Record<keyof SubscriptionEdit, string> = {
+    name: "name",
+    category: "category",
+    cost: "price",
+    billingPeriod: "billing_period",
+    paymentMethodId: "payment_method_id",
+    renewalLink: "renewal_link",
+    cancellationLink: "cancellation_link",
+    autoRenews: "auto_renews",
+};
+
 // What "I renewed" may change (Story 6). Both apply to the new cycles and going forward.
 export interface RenewalInput {
     cost?: number;
@@ -243,6 +267,35 @@ export function createSubscriptionRepository(pool: pg.Pool) {
         // One of the caller's subscriptions, or null. Someone else's id and a missing id look the same.
         async findById(userId: string, id: string): Promise<SubscriptionDetail | null> {
             return withUserContext(pool, userId, (client) => selectDetail(client, userId, id));
+        },
+
+        // Story 8, FR-030: plain edits. Never the status, the start date or the ledger. Optimistic
+        // concurrency: the caller sends the updatedAt it loaded, and a row changed since then (another
+        // tab, a renewal, the lapse job) is a 409 instead of being silently overwritten.
+        async update(userId: string, id: string, edit: SubscriptionEdit, expectedUpdatedAt: string): Promise<SubscriptionDetail> {
+            return withUserContext(pool, userId, async (client) => {
+                const locked = await client.query(
+                    `SELECT subscription_type, date_trunc('milliseconds', updated_at) = $3::timestamptz AS fresh
+                       FROM subscriptions WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+                    [id, userId, expectedUpdatedAt],
+                );
+                if (locked.rowCount !== 1) throw new NotFoundError();
+                if (!locked.rows[0].fresh) throw new ConflictError("This subscription changed since you opened it. Reload to see the latest.");
+                // BR-017: a one-time purchase has no billing period.
+                if (edit.billingPeriod !== undefined && locked.rows[0].subscription_type === "one_time") {
+                    throw new ValidationError("A one-time purchase has no billing period", "billingPeriod");
+                }
+                if (edit.paymentMethodId !== undefined) {
+                    const method = await client.query("SELECT 1 FROM payment_methods WHERE id = $1 AND user_id = $2 AND is_active", [edit.paymentMethodId, userId]);
+                    if (method.rowCount !== 1) throw new ValidationError("Choose one of your active payment methods", "paymentMethodId");
+                }
+
+                const fields = (Object.keys(EDIT_COLUMNS) as Array<keyof SubscriptionEdit>).filter((key) => edit[key] !== undefined);
+                const values = fields.map((key) => (key === "cost" ? (edit.cost as number).toFixed(2) : edit[key]));
+                const sets = fields.map((key, i) => `${EDIT_COLUMNS[key]} = $${i + 3}`);
+                await client.query(`UPDATE subscriptions SET ${[...sets, "updated_at = now()"].join(", ")} WHERE id = $1 AND user_id = $2`, [id, userId, ...values]);
+                return (await selectDetail(client, userId, id))!;
+            });
         },
 
         // Story 7, FR-032: "I cancelled". The subscription becomes inactive and is kept (BR-009);

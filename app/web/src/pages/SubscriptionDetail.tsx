@@ -2,6 +2,9 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router'
 import { ApiError, toFormError } from '../api/client'
 import {
+  checkCost,
+  checkLink,
+  checkText,
   formatMoney,
   getSubscription,
   isValidIsoDate,
@@ -12,9 +15,11 @@ import {
   previewDueDate,
   cancelSubscription,
   renewSubscription,
+  updateSubscription,
   type BillingPeriod,
   type PaymentMethod,
   type RenewalRequest,
+  type SubscriptionEdit,
   type SubscriptionDetail as Detail,
 } from '../api/subscriptions'
 import { AppShell } from '../components/AppShell'
@@ -41,8 +46,6 @@ function SafeLink({ href }: { href: string | null }) {
   )
 }
 
-const COST_PATTERN = /^\d{1,8}(\.\d{1,2})?$/
-
 interface RenewValues {
   missed: '' | 'paid_all' | 'restarted'
   restartDate: string
@@ -66,29 +69,12 @@ function RenewForm({ sub, missedDates, onDone, onCancel }: { sub: Detail; missed
     paymentMethodId: sub.paymentMethod.id,
     billingPeriod: sub.billingPeriod ?? 'monthly',
   })
-  const [methods, setMethods] = useState<PaymentMethod[] | null>(null)
+  const choices = useMethodChoices(sub)
   const [errors, setErrors] = useState<RenewErrors>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const severalMissed = missedDates.length > 1
   const today = localToday()
-
-  useEffect(() => {
-    let cancelled = false
-    listPaymentMethods()
-      .then((list) => {
-        if (!cancelled) setMethods(list)
-      })
-      .catch(() => {
-        if (!cancelled) setMethods([]) // the current method is still offered below
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-  // Active methods, plus the current one even if it was deactivated since.
-  const choices = (methods ?? []).filter((m) => m.isActive || m.id === sub.paymentMethod.id)
-  if (!choices.some((m) => m.id === sub.paymentMethod.id)) choices.unshift({ id: sub.paymentMethod.id, type: sub.paymentMethod.type, isActive: true, createdAt: '' })
 
   const set = <K extends keyof RenewValues>(name: K, value: RenewValues[K]) => setValues((v) => ({ ...v, [name]: value }))
 
@@ -99,9 +85,7 @@ function RenewForm({ sub, missedDates, onDone, onCancel }: { sub: Detail; missed
       if (!isValidIsoDate(values.restartDate)) e.restartDate = 'Enter the date you restarted'
       else if (values.restartDate <= missedDates[0] || values.restartDate > today) e.restartDate = `The date must be after ${missedDates[0]} and not in the future`
     }
-    const cost = values.cost.trim()
-    if (!COST_PATTERN.test(cost)) e.cost = 'Enter the cost as a number with at most 2 decimal places'
-    else if (Number(cost) <= 0) e.cost = 'The cost must be greater than 0'
+    e.cost = checkCost(values.cost)
     return Object.fromEntries(Object.entries(e).filter(([, m]) => m)) as RenewErrors
   }
 
@@ -284,10 +268,171 @@ function Actions({ sub, onRenewed, onCancelled }: { sub: Detail; onRenewed: (u: 
   )
 }
 
+// The payment methods a form may offer: the active ones, plus the current one even if it was
+// deactivated since (so the form never silently changes it).
+function useMethodChoices(sub: Detail): PaymentMethod[] {
+  const [methods, setMethods] = useState<PaymentMethod[] | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    listPaymentMethods()
+      .then((list) => !cancelled && setMethods(list))
+      .catch(() => !cancelled && setMethods([]))
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  const choices = (methods ?? []).filter((m) => m.isActive || m.id === sub.paymentMethod.id)
+  if (!choices.some((m) => m.id === sub.paymentMethod.id)) choices.unshift({ id: sub.paymentMethod.id, type: sub.paymentMethod.type, isActive: true, createdAt: '' })
+  return choices
+}
+
+interface EditValues {
+  name: string
+  category: string
+  cost: string
+  billingPeriod: BillingPeriod
+  paymentMethodId: string
+  renewalLink: string
+  cancellationLink: string
+  autoRenews: boolean
+}
+type EditErrors = Partial<Record<keyof EditValues, string>>
+
+// Story 8: the details become inputs in place. Start date, next renewal and status are shown but
+// not editable (they change only through renew, cancel and the lapse). Only changed fields are
+// sent, with the updatedAt the form opened with, so a stale save is refused (409), not applied.
+function EditForm({ sub, onSaved, onDiscard, onReload }: { sub: Detail; onSaved: (u: Detail) => void; onDiscard: () => void; onReload: () => void }) {
+  const initial: EditValues = {
+    name: sub.name,
+    category: sub.category,
+    cost: String(sub.cost),
+    billingPeriod: sub.billingPeriod ?? 'monthly',
+    paymentMethodId: sub.paymentMethod.id,
+    renewalLink: sub.renewalLink ?? '',
+    cancellationLink: sub.cancellationLink ?? '',
+    autoRenews: sub.autoRenews,
+  }
+  const [values, setValues] = useState<EditValues>(initial)
+  const [errors, setErrors] = useState<EditErrors>({})
+  const [formError, setFormError] = useState<{ message: string; stale: boolean } | null>(null)
+  const [saving, setSaving] = useState(false)
+  const choices = useMethodChoices(sub)
+  const set = <K extends keyof EditValues>(name: K, value: EditValues[K]) => setValues((v) => ({ ...v, [name]: value }))
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    const found: EditErrors = {
+      name: checkText('subscription name', values.name, 100),
+      category: checkText('category', values.category, 50),
+      cost: checkCost(values.cost),
+      renewalLink: checkLink('renewal link', values.renewalLink),
+      cancellationLink: checkLink('cancellation link', values.cancellationLink),
+    }
+    const real = Object.fromEntries(Object.entries(found).filter(([, m]) => m)) as EditErrors
+    setErrors(real)
+    setFormError(null)
+    if (Object.keys(real).length > 0) return
+
+    const body: SubscriptionEdit = { expectedUpdatedAt: sub.updatedAt }
+    if (values.name.trim() !== initial.name) body.name = values.name.trim()
+    if (values.category.trim() !== initial.category) body.category = values.category.trim()
+    if (Number(values.cost) !== sub.cost) body.cost = Number(values.cost)
+    if (sub.billingPeriod && values.billingPeriod !== sub.billingPeriod) body.billingPeriod = values.billingPeriod
+    if (values.paymentMethodId !== initial.paymentMethodId) body.paymentMethodId = values.paymentMethodId
+    if (values.renewalLink.trim() !== initial.renewalLink) body.renewalLink = values.renewalLink.trim()
+    if (values.cancellationLink.trim() !== initial.cancellationLink) body.cancellationLink = values.cancellationLink.trim()
+    if (values.autoRenews !== initial.autoRenews) body.autoRenews = values.autoRenews
+    if (Object.keys(body).length === 1) return onDiscard() // nothing changed
+
+    setSaving(true)
+    try {
+      onSaved(await updateSubscription(sub.id, body))
+    } catch (err) {
+      const stale = err instanceof ApiError && err.status === 409
+      const { message, field } = toFormError(err)
+      if (!stale && field && field in values) setErrors({ [field]: message })
+      else setFormError({ message, stale })
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="stack" onSubmit={(e) => void submit(e)} noValidate aria-label="Edit subscription">
+      <FormField label="Name" value={values.name} error={errors.name} onChange={(e) => set('name', e.target.value)} />
+      <FormField label="Category" value={values.category} error={errors.category} onChange={(e) => set('category', e.target.value)} />
+      <FormField label="Cost" inputMode="decimal" value={values.cost} error={errors.cost} hint="Applies from the next renewal" onChange={(e) => set('cost', e.target.value)} />
+      {sub.billingPeriod && (
+        <SelectField label="Billing period" value={values.billingPeriod} hint="Applies from the next renewal" onChange={(e) => set('billingPeriod', e.target.value as BillingPeriod)}>
+          {Object.entries(PERIOD_LABEL).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </SelectField>
+      )}
+      <SelectField label="Payment method" value={values.paymentMethodId} error={errors.paymentMethodId} onChange={(e) => set('paymentMethodId', e.target.value)}>
+        {choices.map((m) => (
+          <option key={m.id} value={m.id}>
+            {PAYMENT_METHOD_LABEL[m.type]}
+            {m.id === sub.paymentMethod.id ? ' (current)' : ''}
+          </option>
+        ))}
+      </SelectField>
+      <label className="check-row">
+        <input type="checkbox" checked={values.autoRenews} onChange={(e) => set('autoRenews', e.target.checked)} />
+        Renews automatically
+      </label>
+      <FormField label="Renewal link" type="url" value={values.renewalLink} error={errors.renewalLink} hint="Leave empty to remove it" onChange={(e) => set('renewalLink', e.target.value)} />
+      <FormField label="Cancellation link" type="url" value={values.cancellationLink} error={errors.cancellationLink} hint="Leave empty to remove it" onChange={(e) => set('cancellationLink', e.target.value)} />
+
+      <dl className="detail-list">
+        <dt>Start date</dt>
+        <dd>{sub.startDate}</dd>
+        <dt>{sub.billingPeriod ? 'Next renewal' : 'Due'}</dt>
+        <dd>{sub.currentCycle?.dueDate ?? '—'}</dd>
+      </dl>
+      <p className="muted">The start date and next renewal change only when you record a renewal or a cancellation.</p>
+
+      {formError && (
+        <div role="alert" className="alert-error stack">
+          <span>{formError.message}</span>
+          {formError.stale && (
+            <div>
+              <button type="button" className="btn-secondary" onClick={onReload}>
+                Reload
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      <div className="action-row">
+        <button type="submit" className="btn-primary" disabled={saving}>
+          {saving ? 'Saving…' : 'Update'}
+        </button>
+        <button type="button" className="btn-secondary" onClick={onDiscard} disabled={saving}>
+          Discard changes
+        </button>
+      </div>
+    </form>
+  )
+}
+
+// A pencil, drawn inline (no icon library). Hidden from screen readers: the button has a label.
+function PencilIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" width="18" height="18" fill="currentColor">
+      <path d="M13.6 2.6a2 2 0 0 1 2.8 0l1 1a2 2 0 0 1 0 2.8l-9.9 9.9-4 1.1a.6.6 0 0 1-.7-.7l1.1-4 9.7-10.1Zm-8.4 11 .9.9 8.6-8.6-.9-.9-8.6 8.6Z" />
+    </svg>
+  )
+}
+
 export default function SubscriptionDetail() {
   const { id = '' } = useParams()
   const [state, setState] = useState<DetailState>({ kind: 'loading', id })
   const [notice, setNotice] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  // Bumped to load the subscription again (after a stale save).
+  const [loads, setLoads] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -303,7 +448,7 @@ export default function SubscriptionDetail() {
     return () => {
       cancelled = true
     }
-  }, [id])
+  }, [id, loads])
 
   const current: DetailState = state.id === id ? state : { kind: 'loading', id }
 
@@ -334,12 +479,44 @@ export default function SubscriptionDetail() {
         <div className="form-card stack">
           <div className="page-actions">
             <h1 className="heading">{current.subscription.name}</h1>
-            {current.subscription.status === 'active-unknown' ? (
-              <span className="badge-warning">Needs action</span>
-            ) : (
-              <span className="badge">{STATUS_LABEL[current.subscription.status]}</span>
-            )}
+            <div className="flex items-center gap-3">
+              {current.subscription.status === 'active-unknown' ? (
+                <span className="badge-warning">Needs action</span>
+              ) : (
+                <span className="badge">{STATUS_LABEL[current.subscription.status]}</span>
+              )}
+              {!editing && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label="Edit details"
+                  title="Edit details"
+                  onClick={() => {
+                    setNotice(null)
+                    setEditing(true)
+                  }}
+                >
+                  <PencilIcon />
+                </button>
+              )}
+            </div>
           </div>
+          {editing ? (
+            <EditForm
+              sub={current.subscription}
+              onDiscard={() => setEditing(false)}
+              onReload={() => {
+                setEditing(false)
+                setLoads((n) => n + 1)
+              }}
+              onSaved={(updated) => {
+                setState({ kind: 'ready', id, subscription: updated })
+                setEditing(false)
+                setNotice('Changes saved.')
+              }}
+            />
+          ) : (
+          <>
           <dl className="detail-list">
             <dt>Category</dt>
             <dd>{current.subscription.category}</dd>
@@ -390,6 +567,8 @@ export default function SubscriptionDetail() {
               setNotice('Cancellation recorded. It is now inactive and you will get no more reminders for it.')
             }}
           />
+          </>
+          )}
         </div>
       )}
     </AppShell>

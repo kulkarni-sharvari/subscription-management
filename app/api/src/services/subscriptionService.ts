@@ -1,6 +1,6 @@
 import { addBillingPeriod } from "../domain/billingDates.js";
 import { NotFoundError } from "../errors.js";
-import type { NewSubscription, PageKey, RenewalInput, SubscriptionRepository, SubscriptionStatus } from "../repositories/subscriptionRepository.js";
+import type { NewSubscription, PageKey, RenewalInput, SubscriptionEdit, SubscriptionRepository, SubscriptionStatus } from "../repositories/subscriptionRepository.js";
 import type { NotificationService } from "./notificationService.js";
 
 export function createSubscriptionService(deps: {
@@ -35,6 +35,10 @@ export function createSubscriptionService(deps: {
             if (!found) throw new NotFoundError();
             return found;
         },
+
+        // Story 8, FR-030: edit details. No email: an edit never changes the status.
+        update: (userId: string, id: string, edit: SubscriptionEdit, expectedUpdatedAt: string) =>
+            deps.subscriptions.update(userId, id, edit, expectedUpdatedAt),
 
         // Story 7, FR-032: "I cancelled". Best-effort email, as above; a refused (409) or unknown
         // (404) request sends nothing.

@@ -93,6 +93,22 @@ export function listSubscriptions(status: SubscriptionStatus, cursor?: string | 
 }
 export const getSubscription = (id: string) => api.get<SubscriptionDetail>(`/subscriptions/${encodeURIComponent(id)}`)
 export const createSubscription = (body: NewSubscription) => api.post<Subscription>('/subscriptions', body)
+// Story 8: only the fields that changed, plus the updatedAt the form was opened with. An empty
+// link clears it. A 409 means the subscription changed since (another tab, a renewal).
+export interface SubscriptionEdit {
+  expectedUpdatedAt: string
+  name?: string
+  category?: string
+  cost?: number
+  billingPeriod?: BillingPeriod
+  paymentMethodId?: string
+  renewalLink?: string
+  cancellationLink?: string
+  autoRenews?: boolean
+}
+export const updateSubscription = (id: string, body: SubscriptionEdit) =>
+  api.patch<SubscriptionDetail>(`/subscriptions/${encodeURIComponent(id)}`, body)
+
 // No body: the API records the cancellation date itself.
 export const cancelSubscription = (id: string) => api.post<SubscriptionDetail>(`/subscriptions/${encodeURIComponent(id)}/cancel`)
 // `key` is one UUID per renewal attempt, reused on a retry, so a double submit records once (SEC-041).
@@ -102,6 +118,38 @@ export const renewSubscription = (id: string, body: RenewalRequest, key: string)
 // One currency for the whole app (BR-011). Change it here if the account currency changes.
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 export const formatMoney = (value: number) => money.format(value)
+
+// Form checks shared by the add and edit forms. They mirror the API's rules so mistakes are
+// caught before a request is sent; the API checks everything again (this is not security).
+export const COST_PATTERN = /^\d{1,8}(\.\d{1,2})?$/
+const hasControlCharacter = (value: string) => /\p{Cc}/u.test(value)
+
+export function checkText(label: string, raw: string, max: number): string | undefined {
+  const value = raw.trim()
+  if (!value) return `Enter the ${label}`
+  if (value.length > max) return `The ${label} must be at most ${max} characters`
+  if (hasControlCharacter(value)) return `The ${label} contains characters that are not allowed`
+}
+
+export function checkLink(label: string, raw: string): string | undefined {
+  const value = raw.trim()
+  if (!value) return undefined
+  const message = `The ${label} must be a valid http or https address`
+  if (value.length > 2048) return `The ${label} must be at most 2048 characters`
+  if (!/^https?:\/\//i.test(value)) return message
+  try {
+    const url = new URL(value)
+    if (url.username || url.password) return message
+  } catch {
+    return message
+  }
+}
+
+export function checkCost(raw: string): string | undefined {
+  const cost = raw.trim()
+  if (!COST_PATTERN.test(cost)) return 'Enter the cost as a number with at most 2 decimal places'
+  if (Number(cost) <= 0) return 'The cost must be greater than 0'
+}
 
 // Today as YYYY-MM-DD in the user's own calendar (not UTC, which can be a day off in the evening).
 export function localToday(): string {
