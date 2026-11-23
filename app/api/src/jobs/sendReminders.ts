@@ -2,7 +2,7 @@ import type pg from "pg";
 import { withTransaction } from "../db/pool.js";
 import { addDays, daysBetween } from "../domain/billingDates.js";
 import { isValidTimeZone, localDateAndHour } from "../domain/timeZones.js";
-import type { DigestItem } from "../email/templates.js";
+import type { DigestItem, OverdueItem } from "../email/templates.js";
 import { emailsSentTodayForAllUsers, recordOnce } from "../repositories/notificationLogRepository.js";
 import { findReminderCandidatesForAllUsers, type ReminderCandidate } from "../repositories/subscriptionRepository.js";
 import type { NotificationService } from "../services/notificationService.js";
@@ -12,11 +12,15 @@ import type { NotificationService } from "../services/notificationService.js";
 export const SEND_HOUR = 9;
 // A subscription is in the digest on each of the 5 days before it renews (FR-050).
 export const FIRST_REMINDER_DAYS = 5;
+// A subscription left in "Needs action" brings a digest the morning after its renewal date and
+// every this-many days after that (FR-053, BR-018), even when nothing renews soon.
+export const NEEDS_ACTION_EVERY_DAYS = 3;
 // Resend's free plan sends at most 100 emails a day; a warning is logged at 80% (SEC-048).
 export const PROVIDER_DAILY_LIMIT = 100;
 
 export interface ReminderRunResult {
-    // Users with at least one subscription 1 to 5 days from renewal, in their own calendar.
+    // Users who get a digest today: something renews in 1 to 5 days (their calendar), or it is
+    // a "Needs action" day for something whose renewal date passed.
     usersDue: number;
     sent: number;
     // Already sent a digest today (an earlier run, or a retry).
@@ -29,8 +33,11 @@ export interface ReminderRunResult {
 
 class CapReached extends Error {}
 
-// The daily renewal digest (Story 4): one email per user per local day, listing every active
-// recurring subscription that renews in 1 to 5 days (FR-050, BR-007). Runs as job_runner.
+// The daily digest: at most one email per user per local day, from 09:00 their
+// time, with two sections. "Renews soon": every active recurring subscription renewing in 1 to 5 days (FR-050, BR-007). "Needs action": every active-unknown one whose renewal date passed
+// (BR-008, FR-053). A digest goes out when something renews soon, or on the day after a lapse
+// and every 3 days after that; whenever one goes out, it lists everything that needs action.
+// Runs as job_runner.
 export function createSendRemindersJob(deps: {
     pool: pg.Pool;
     notifications: Pick<NotificationService, "renewalDigest">;
@@ -56,6 +63,7 @@ export function createSendRemindersJob(deps: {
                 const timeZone = isValidTimeZone(rows[0].timeZone) ? rows[0].timeZone : "UTC";
                 const local = localDateAndHour(moment, timeZone);
                 const items: DigestItem[] = rows
+                    .filter((row) => row.status === "active")
                     .map((row) => ({ row, daysLeft: daysBetween(local.date, row.dueDate) }))
                     .filter(({ daysLeft }) => daysLeft >= 1 && daysLeft <= FIRST_REMINDER_DAYS)
                     .map(({ row, daysLeft }) => ({
@@ -67,7 +75,24 @@ export function createSendRemindersJob(deps: {
                         paymentMethodType: row.paymentMethodType,
                         renewalLink: row.renewalLink,
                     }));
-                if (items.length === 0) continue;
+                const overdue: OverdueItem[] = rows
+                    .filter((row) => row.status === "active-unknown")
+                    .map((row) => ({ row, daysOverdue: daysBetween(row.dueDate, local.date) }))
+                    // A cycle can be "due" before its date ends only through a direct database edit; skip it.
+                    .filter(({ daysOverdue }) => daysOverdue >= 1)
+                    .map(({ row, daysOverdue }) => ({
+                        name: row.name,
+                        cost: row.cost,
+                        billingPeriod: row.billingPeriod,
+                        dueDate: row.dueDate,
+                        daysOverdue,
+                        paymentMethodType: row.paymentMethodType,
+                        renewalLink: row.renewalLink,
+                    }))
+                    .sort((a, b) => b.daysOverdue - a.daysOverdue || a.name.localeCompare(b.name));
+                // Day 1 after the renewal date, then days 4, 7, 10 ...
+                const needsActionDay = overdue.some((o) => (o.daysOverdue - 1) % NEEDS_ACTION_EVERY_DAYS === 0);
+                if (items.length === 0 && !needsActionDay) continue;
                 result.usersDue++;
                 if (local.hour < SEND_HOUR) {
                     result.notYetMorning++;
@@ -81,7 +106,7 @@ export function createSendRemindersJob(deps: {
                     const outcome = await withTransaction(deps.pool, async (client) => {
                         const fresh = await recordOnce(client, { userId, type: "reminder_digest", dedupKey: `reminder-digest:${local.date}` });
                         if (!fresh) return "alreadySent" as const;
-                        const sent = await deps.notifications.renewalDigest(client, { userId, email: rows[0].email }, items);
+                        const sent = await deps.notifications.renewalDigest(client, { userId, email: rows[0].email }, items, overdue);
                         if (sent === "capped") throw new CapReached();
                         return "sent" as const;
                     });

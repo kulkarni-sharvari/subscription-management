@@ -13,6 +13,7 @@ import { createMeRouter } from "./routes/me.js";
 import { createPaymentMethodsRouter } from "./routes/paymentMethods.js";
 import { createSubscriptionsRouter } from "./routes/subscriptions.js";
 import type { SendRemindersJob } from "./jobs/sendReminders.js";
+import type { TransitionOverdueJob } from "./jobs/transitionOverdue.js";
 import type { AuthService } from "./services/authService.js";
 import type { PaymentMethodService } from "./services/paymentMethodService.js";
 import type { ProfileService } from "./services/profileService.js";
@@ -32,7 +33,7 @@ export interface AppDeps {
     // Reverse proxies in front of the API (0 = none); decides which address counts as the client.
     trustProxyHops: number;
     // The scheduled jobs and the shared secret that guards them (routes/internalJobs.ts).
-    internalJobs: { secret: string; sendReminders: Pick<SendRemindersJob, "run"> };
+    internalJobs: { secret: string; sendReminders: Pick<SendRemindersJob, "run">; transitionOverdue: Pick<TransitionOverdueJob, "run"> };
 }
 
 // Builds the Express app without starting it, so tests can drive it through supertest

@@ -1,5 +1,5 @@
 import type pg from "pg";
-import { renewalDigestEmail, subscriptionsAddedEmail, type DigestItem } from "../email/templates.js";
+import { renewalDigestEmail, subscriptionsAddedEmail, type DigestItem, type OverdueItem } from "../email/templates.js";
 import { reserveEmailSlot } from "../repositories/notificationLogRepository.js";
 import type { ProfileRepository } from "../repositories/profileRepository.js";
 import type { SubscriptionDetail } from "../repositories/subscriptionRepository.js";
@@ -32,16 +32,17 @@ export function createNotificationService(deps: {
             await deps.email.send({ to: profile.email, ...subscriptionsAddedEmail(subscriptions) });
         },
 
-        // The renewal digest, sent inside the reminder job's transaction: the slot is taken with the
+        // The daily digest ("Needs action" and "Renews soon"), sent inside the reminder job's transaction: the slot is taken with the
         // job's client, so a failed send rolls back the slot together with the job's log row.
         // "capped" means nothing was sent because the user reached today's cap.
         async renewalDigest(
             client: pg.PoolClient,
             recipient: { userId: string; email: string },
             items: DigestItem[],
+            overdue: OverdueItem[] = [],
         ): Promise<"sent" | "capped"> {
             if (!(await reserveEmailSlot(client, recipient.userId, EMAIL_DAILY_CAP))) return "capped";
-            await deps.email.send({ to: recipient.email, ...renewalDigestEmail(items) });
+            await deps.email.send({ to: recipient.email, ...renewalDigestEmail(items, overdue) });
             return "sent";
         },
     };

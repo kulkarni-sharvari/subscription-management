@@ -448,10 +448,9 @@ describe.skipIf(!local)("Story 4 against the database", () => {
         });
 
         it.each([
-            "UPDATE subscriptions SET status = 'inactive'",
+            // Status changes are Story 5's (lapse.security.test.ts), and limited to one transition there.
             "DELETE FROM subscriptions",
             "INSERT INTO subscriptions (user_id) VALUES (gen_random_uuid())",
-            "UPDATE billing SET status = 'due'",
             "DELETE FROM billing",
             "UPDATE profiles SET email = 'x@example.com'",
             "UPDATE profiles SET time_zone = 'UTC'",

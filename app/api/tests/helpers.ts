@@ -13,6 +13,7 @@ import type { AuthService } from "../src/services/authService.js";
 import { createNotificationService, EMAIL_DAILY_CAP } from "../src/services/notificationService.js";
 import { withUserContext } from "../src/db/pool.js";
 import { createSendRemindersJob } from "../src/jobs/sendReminders.js";
+import { createTransitionOverdueJob } from "../src/jobs/transitionOverdue.js";
 import { reserveEmailSlot } from "../src/repositories/notificationLogRepository.js";
 import { createPaymentMethodService } from "../src/services/paymentMethodService.js";
 import { createProfileService } from "../src/services/profileService.js";
@@ -104,6 +105,7 @@ export function buildTestApp({ keys, production = false, authService, profileExi
     const getProfile = vi.fn(async (id: string) => ({ id, email: "me@example.com", timeZone: "UTC", createdAt: new Date("2026-01-01T00:00:00.000Z") }));
     const setTimeZone = vi.fn(async (id: string, timeZone: string) => ({ id, email: "me@example.com", timeZone, createdAt: new Date("2026-01-01T00:00:00.000Z") }));
     const sendReminders = { run: vi.fn(async () => ({ usersDue: 0, sent: 0, alreadySent: 0, notYetMorning: 0, capped: 0, failed: 0 })) };
+    const transitionOverdue = { run: vi.fn(async () => ({ usersLapsed: 0, subscriptionsLapsed: 0, failed: 0 })) };
     const paymentMethodService = {
         create: vi.fn(async () => ({ id: USER_ID, type: "credit_card" as const, isActive: true, createdAt: new Date() })),
         list: vi.fn(async () => []),
@@ -122,14 +124,14 @@ export function buildTestApp({ keys, production = false, authService, profileExi
         subscriptionService,
         limiters: createRateLimiters(limits),
         trustProxyHops: 0,
-        internalJobs: { secret: JOB_SECRET, sendReminders },
+        internalJobs: { secret: JOB_SECRET, sendReminders, transitionOverdue },
         auth: createAuth({
             cookies,
             verifyToken: createTokenVerifier(SUPABASE_URL, keys.jwks),
             profileExists: profileExists ?? (async () => true),
         }),
     });
-    return { app, service, getProfile, setTimeZone, sendReminders, cookies, paymentMethodService, subscriptionService };
+    return { app, service, getProfile, setTimeZone, sendReminders, transitionOverdue, cookies, paymentMethodService, subscriptionService };
 }
 
 // The same app, but with the real repositories and services on the local database. Only the
@@ -145,7 +147,6 @@ export function buildDbTestApp({
     db: Db;
     limits?: RateLimitConfig;
     sendEmail?: (m: EmailMessage) => Promise<void>;
-    // The reminder job's clock; tests fix it to a known moment.
     now?: () => Date;
 }) {
     const cookies = createSessionCookies(false);
@@ -168,7 +169,11 @@ export function buildDbTestApp({
         }),
         limiters: createRateLimiters(limits),
         trustProxyHops: 0,
-        internalJobs: { secret: JOB_SECRET, sendReminders: createSendRemindersJob({ pool: db.job, notifications, now }) },
+        internalJobs: {
+            secret: JOB_SECRET,
+            sendReminders: createSendRemindersJob({ pool: db.job, notifications, now }),
+            transitionOverdue: createTransitionOverdueJob({ pool: db.job, now }),
+        },
         auth: createAuth({ cookies, verifyToken: createTokenVerifier(SUPABASE_URL, keys.jwks), profileExists: profiles.exists }),
     });
     return { app, email };

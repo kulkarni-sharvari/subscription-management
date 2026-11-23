@@ -249,20 +249,20 @@ export interface ReminderCandidate {
     renewalLink: string | null;
     paymentMethodType: PaymentMethodType;
     dueDate: string;
+    // "active": renews on dueDate. "active-unknown": dueDate passed with nothing recorded (Story 5).
+    status: "active" | "active-unknown";
 }
 
-// CROSS-USER, for the reminder job only (run with the job_runner role, never app_user). Every
-// active recurring subscription whose current cycle is paid and due between the two dates.
-// The job then works out each user's own calendar day and keeps only what is 1 to 5 days away.
-// Owner, payment method and billing rows are all joined on the same user_id, so a row can never
-// mix one user's subscription with another user's address or data.
+// CROSS-USER, for the digest job only (run with the job_runner role, never app_user). Every
+// active recurring subscription whose current cycle is paid and due between the two dates, and
+// every active-unknown one whose current cycle lapsed (due), however long ago.
 export async function findReminderCandidatesForAllUsers(
     db: Pick<pg.Pool, "query">,
     dueFrom: string,
     dueTo: string,
 ): Promise<ReminderCandidate[]> {
     const { rows } = await db.query(
-        `SELECT p.id AS user_id, p.email, p.time_zone, s.id, s.name, s.price, s.billing_period,
+        `SELECT p.id AS user_id, p.email, p.time_zone, s.id, s.name, s.price, s.billing_period, s.status,
                 s.renewal_link, pm.type AS pm_type, c.due_date
            FROM subscriptions s
            JOIN profiles p ON p.id = s.user_id
@@ -272,8 +272,9 @@ export async function findReminderCandidatesForAllUsers(
                  WHERE b.subscription_id = s.id AND b.user_id = s.user_id
                  ORDER BY b.due_date DESC LIMIT 1
            ) c ON true
-          WHERE s.status = 'active' AND s.subscription_type = 'recurring' AND c.status = 'paid'
-            AND c.due_date BETWEEN $1::date AND $2::date
+          WHERE s.subscription_type = 'recurring'
+            AND ((s.status = 'active' AND c.status = 'paid' AND c.due_date BETWEEN $1::date AND $2::date)
+              OR (s.status = 'active-unknown' AND c.status = 'due'))
           ORDER BY p.id, c.due_date, s.name, s.id`,
         [dueFrom, dueTo],
     );
@@ -288,5 +289,88 @@ export async function findReminderCandidatesForAllUsers(
         renewalLink: row.renewal_link,
         paymentMethodType: row.pm_type,
         dueDate: row.due_date,
+        status: row.status,
     }));
+}
+
+// A user who has at least one active recurring subscription whose current cycle is still paid
+// and was due on or before the given date. The overdue job works out per user (in their own
+// time zone) whether that date has really passed for them.
+export interface OverdueUser {
+    userId: string;
+    email: string;
+    timeZone: string;
+    // The earliest such due date, so the job can skip users whose local date has not passed it yet.
+    earliestDueDate: string;
+}
+
+// CROSS-USER, for the overdue job only (job_runner). Read-only: finds who might need a lapse.
+export async function findUsersWithOverdueForAllUsers(db: Pick<pg.Pool, "query">, dueOnOrBefore: string): Promise<OverdueUser[]> {
+    const { rows } = await db.query(
+        `SELECT p.id AS user_id, p.email, p.time_zone, MIN(c.due_date) AS earliest_due
+           FROM subscriptions s
+           JOIN profiles p ON p.id = s.user_id
+           JOIN LATERAL (
+                SELECT b.due_date, b.status FROM billing b
+                 WHERE b.subscription_id = s.id AND b.user_id = s.user_id
+                 ORDER BY b.due_date DESC LIMIT 1
+           ) c ON true
+          WHERE s.status = 'active' AND s.subscription_type = 'recurring' AND c.status = 'paid'
+            AND c.due_date <= $1::date
+          GROUP BY p.id, p.email, p.time_zone
+          ORDER BY p.id`,
+        [dueOnOrBefore],
+    );
+    return rows.map((row) => ({ userId: row.user_id, email: row.email, timeZone: row.time_zone, earliestDueDate: row.earliest_due }));
+}
+
+// One subscription that just lapsed, as shown in the status-change email.
+export interface LapsedSubscription {
+    subscriptionId: string;
+    name: string;
+    cost: number;
+    billingPeriod: BillingPeriod;
+    dueDate: string;
+    renewalLink: string | null;
+}
+
+// FR-033, FR-045, BR-006: for one user, every active recurring subscription whose current cycle
+// is paid and due before `localToday` becomes active-unknown, and that cycle becomes due. One
+// statement inside the caller's transaction: the rows are locked first (FOR UPDATE), and the
+// conditions are checked again at that moment, so a renewal recorded at the same time wins and a
+// second run finds nothing left to do. Returns only the subscriptions this call changed.
+export async function lapseOverdueForUser(client: pg.PoolClient, userId: string, localToday: string): Promise<LapsedSubscription[]> {
+    const { rows } = await client.query(
+        `WITH lapsed AS (
+              SELECT s.id, s.name, s.price, s.billing_period, s.renewal_link, c.transaction_id, c.due_date
+                FROM subscriptions s
+                JOIN LATERAL (
+                     SELECT b.transaction_id, b.due_date, b.status FROM billing b
+                      WHERE b.subscription_id = s.id AND b.user_id = s.user_id
+                      ORDER BY b.due_date DESC LIMIT 1
+                ) c ON true
+               WHERE s.user_id = $1 AND s.status = 'active' AND s.subscription_type = 'recurring'
+                 AND c.status = 'paid' AND c.due_date < $2::date
+                 FOR UPDATE OF s
+         ), cycles AS (
+              UPDATE billing b SET status = 'due', updated_at = now()
+                FROM lapsed l
+               WHERE b.transaction_id = l.transaction_id AND b.status = 'paid'
+         )
+         UPDATE subscriptions s SET status = 'active-unknown', updated_at = now()
+           FROM lapsed l
+          WHERE s.id = l.id
+         RETURNING l.id, l.name, l.price, l.billing_period, l.renewal_link, l.due_date`,
+        [userId, localToday],
+    );
+    return rows
+        .map((row) => ({
+            subscriptionId: row.id,
+            name: row.name,
+            cost: Number(row.price),
+            billingPeriod: row.billing_period,
+            dueDate: row.due_date,
+            renewalLink: row.renewal_link,
+        }))
+        .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.name.localeCompare(b.name) || a.subscriptionId.localeCompare(b.subscriptionId));
 }

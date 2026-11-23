@@ -77,37 +77,85 @@ export interface DigestItem {
 }
 
 const inDays = (days: number) => (days === 1 ? "tomorrow" : `in ${days} days`);
+const daysAgo = (days: number) => (days === 1 ? "1 day ago" : `${days} days ago`);
+const count = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
 
-// The daily renewal digest (Story 4, FR-050): everything of one user's that renews in the next 1
-// to 5 days, in one email. Same rules as above: one recipient, every value escaped, a listing cap.
-export function renewalDigestEmail(items: DigestItem[]): EmailContent {
-    if (items.length === 0) throw new Error("no subscriptions to describe");
-    const listed = items.slice(0, MAX_LISTED);
-    const omitted = items.length - listed.length;
+// One subscription in the "Needs action" section: its renewal date passed with no renewal or
+// cancellation recorded, so it is active-unknown (Story 5).
+export interface OverdueItem {
+    name: string;
+    cost: number;
+    billingPeriod: keyof typeof PERIOD_LABEL;
+    dueDate: string;
+    daysOverdue: number;
+    paymentMethodType: keyof typeof METHOD_LABEL;
+    renewalLink: string | null;
+}
 
-    const subject = items.length === 1 ? `Renews ${inDays(items[0].daysLeft)}: ${items[0].name}` : `${items.length} subscriptions renew soon`;
-    const intro =
-        items.length === 1
-            ? "One of your subscriptions renews soon. Decide whether to keep it."
-            : `${items.length} of your subscriptions renew soon. Decide which to keep.`;
+// The daily digest (Stories 4 and 5, FR-050, BR-008, FR-053): one email per user per day with up
+// to two sections, "Needs action" (renewal date passed, nothing recorded) and "Renews soon" (the
+// next 1 to 5 days). Same rules as above: one recipient, every value escaped, a listing cap.
+export function renewalDigestEmail(items: DigestItem[], overdue: OverdueItem[] = []): EmailContent {
+    if (items.length === 0 && overdue.length === 0) throw new Error("no subscriptions to describe");
+    // The cap covers both sections together; "Needs action" comes first.
+    const listedOverdue = overdue.slice(0, MAX_LISTED);
+    const listedSoon = items.slice(0, MAX_LISTED - listedOverdue.length);
+    const omitted = overdue.length + items.length - listedOverdue.length - listedSoon.length;
+
+    // The subject has no line breaks to inject: names are validated to contain no control characters.
+    let subject: string;
+    if (overdue.length === 0) subject = items.length === 1 ? `Renews ${inDays(items[0].daysLeft)}: ${items[0].name}` : `${items.length} subscriptions renew soon`;
+    else if (items.length === 0) subject = overdue.length === 1 ? `Did it renew? ${overdue[0].name}` : `${overdue.length} subscriptions need action`;
+    else subject = `${count(overdue.length, "subscription needs", "subscriptions need")} action, ${count(items.length, "renews", "renew")} soon`;
+
+    const sections: Array<{ heading: string; intro: string; rows: Array<Array<[string, string]>> }> = [];
+    if (listedOverdue.length > 0) {
+        sections.push({
+            heading: "Needs action",
+            intro: "The renewal date passed and you have not recorded whether you renewed or cancelled. Open the app to update them.",
+            rows: listedOverdue.map((item) => {
+                const list: Array<[string, string]> = [
+                    ["Name", item.name],
+                    ["Renewal date", `${item.dueDate} (${daysAgo(item.daysOverdue)})`],
+                    ["Cost", item.cost.toFixed(2)],
+                    ["Billing", PERIOD_LABEL[item.billingPeriod]],
+                    ["Payment method", METHOD_LABEL[item.paymentMethodType]],
+                ];
+                if (item.renewalLink) list.push(["Renewal link", item.renewalLink]);
+                return list;
+            }),
+        });
+    }
+    if (listedSoon.length > 0) {
+        sections.push({
+            heading: "Renews soon",
+            intro: items.length === 1 ? "One of your subscriptions renews soon. Decide whether to keep it." : `${items.length} of your subscriptions renew soon. Decide which to keep.`,
+            rows: listedSoon.map((item) => {
+                const list: Array<[string, string]> = [
+                    ["Name", item.name],
+                    ["Renews", `${item.dueDate} (${inDays(item.daysLeft)})`],
+                    ["Cost", item.cost.toFixed(2)],
+                    ["Billing", PERIOD_LABEL[item.billingPeriod]],
+                    ["Payment method", METHOD_LABEL[item.paymentMethodType]],
+                ];
+                if (item.renewalLink) list.push(["Renewal link", item.renewalLink]);
+                return list;
+            }),
+        });
+    }
     const more = omitted > 0 ? `...and ${omitted} more. Open the app to see them all.` : "";
 
-    const rows = (item: DigestItem): Array<[string, string]> => {
-        const list: Array<[string, string]> = [
-            ["Name", item.name],
-            ["Renews", `${item.dueDate} (${inDays(item.daysLeft)})`],
-            ["Cost", item.cost.toFixed(2)],
-            ["Billing", PERIOD_LABEL[item.billingPeriod]],
-            ["Payment method", METHOD_LABEL[item.paymentMethodType]],
-        ];
-        if (item.renewalLink) list.push(["Renewal link", item.renewalLink]);
-        return list;
-    };
-
-    const html = `<p>${escapeHtml(intro)}</p>` + listed.map((item) => htmlTable(rows(item))).join("<br>") + (more ? `<p>${escapeHtml(more)}</p>` : "");
+    const html =
+        sections
+            .map((s) => `<h2>${escapeHtml(s.heading)}</h2><p>${escapeHtml(s.intro)}</p>` + s.rows.map(htmlTable).join("<br>"))
+            .join("") + (more ? `<p>${escapeHtml(more)}</p>` : "");
     const text = [
-        intro,
-        ...listed.flatMap((item) => ["", ...rows(item).map(([label, value]) => `${label}: ${value}`)]),
+        ...sections.flatMap((s, i) => [
+            ...(i > 0 ? [""] : []),
+            s.heading.toUpperCase(),
+            s.intro,
+            ...s.rows.flatMap((rows) => ["", ...rows.map(([label, value]) => `${label}: ${value}`)]),
+        ]),
         ...(more ? ["", more] : []),
     ].join("\n");
     return { subject, html, text };

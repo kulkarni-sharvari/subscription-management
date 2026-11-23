@@ -5,6 +5,7 @@ import { loadEnv } from "./config/env.js";
 import { createPool } from "./db/pool.js";
 import { createAuth, createTokenVerifier } from "./middleware/auth.js";
 import { createSendRemindersJob } from "./jobs/sendReminders.js";
+import { createTransitionOverdueJob } from "./jobs/transitionOverdue.js";
 import { createSessionCookies } from "./session/cookies.js";
 import { createAuthService } from "./services/authService.js";
 import { createRateLimiters } from "./middleware/rateLimit.js";
@@ -58,6 +59,7 @@ const app = createApp({
     internalJobs: {
         secret: env.INTERNAL_JOB_SECRET,
         sendReminders: createSendRemindersJob({ pool: jobPool, notifications }),
+        transitionOverdue: createTransitionOverdueJob({ pool: jobPool }),
     },
 });
 
