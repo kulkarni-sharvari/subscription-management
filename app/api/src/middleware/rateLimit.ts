@@ -14,6 +14,8 @@ export interface RateLimitConfig {
     session: { limit: number; windowMs: number };
     // Wrong or missing job secrets, per address. Correct requests are not counted.
     jobAuthFailures: { limit: number; windowMs: number };
+    // GET /analytics/spending, per user: it aggregates the whole ledger (SEC-038, SEC-051).
+    analytics: { limit: number; windowMs: number };
 }
 
 // Sized from a measurement against the real database, not guessed: one database round trip is
@@ -28,6 +30,7 @@ export const defaultRateLimits: RateLimitConfig = {
     register: { limit: 5, windowMs: HOUR },
     session: { limit: 30, windowMs: 15 * MINUTE },
     jobAuthFailures: { limit: 5, windowMs: MINUTE },
+    analytics: { limit: 20, windowMs: MINUTE },
 };
 
 type Window = { limit: number; windowMs: number };
@@ -60,6 +63,7 @@ export function createRateLimiters(config: RateLimitConfig = defaultRateLimits) 
         register: limiter(config.register, byIp),
         session: limiter(config.session, byIp),
         jobAuthFailures: limiter(config.jobAuthFailures, byIp, { onlyFailures: true }),
+        analytics: limiter(config.analytics, byUser),
     };
 }
 

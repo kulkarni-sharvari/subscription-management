@@ -1,6 +1,7 @@
 // Shared setup for the security tests: a real Express app wired with fake Supabase calls and
 // tokens signed by a throwaway key, so no network, database or real account is needed.
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWTVerifyGetKey } from "jose";
+import { createAnalyticsRepository } from "../src/repositories/analyticsRepository.js";
 import { vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { AppError } from "../src/errors.js";
@@ -84,7 +85,7 @@ export function createFakeAuthService(overrides: Partial<AuthService> = {}) {
 const unlimited = { limit: 1_000_000, windowMs: 60_000 };
 // Limits so high that tests never meet them by accident; rate-limit tests pass their own.
 export const NO_LIMITS: RateLimitConfig = {
-    perUser: unlimited, writes: unlimited, login: unlimited, register: unlimited, session: unlimited, jobAuthFailures: unlimited,
+    perUser: unlimited, writes: unlimited, login: unlimited, register: unlimited, session: unlimited, jobAuthFailures: unlimited, analytics: unlimited,
 };
 
 // A job secret for tests: 43 characters, like 32 random bytes in base64url.
@@ -125,6 +126,7 @@ export function buildTestApp({ keys, production = false, authService, profileExi
         profileService: { getProfile, setTimeZone },
         paymentMethodService,
         subscriptionService,
+        analytics: { spending: vi.fn(async () => ({}) as never) },
         limiters: createRateLimiters(limits),
         trustProxyHops: 0,
         internalJobs: { secret: JOB_SECRET, sendReminders, transitionOverdue },
@@ -170,6 +172,7 @@ export function buildDbTestApp({
             subscriptions: createSubscriptionRepository(db.app),
             notifications,
         }),
+        analytics: createAnalyticsRepository(db.app),
         limiters: createRateLimiters(limits),
         trustProxyHops: 0,
         internalJobs: {

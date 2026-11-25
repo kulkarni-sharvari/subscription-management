@@ -36,9 +36,9 @@ describe("the renewal rules (pure)", () => {
 
     it("'I kept paying' records one payment per missed renewal; only the newest is not a catch-up", () => {
         expect(planRenewal(base, { missed: "paid_all" }).cycles).toEqual([
-            { dueDate: "2026-11-01", catchUp: true },
-            { dueDate: "2026-12-01", catchUp: true },
-            { dueDate: "2027-01-01", catchUp: false },
+            { paidOn: "2026-10-01", dueDate: "2026-11-01", catchUp: true },
+            { paidOn: "2026-11-01", dueDate: "2026-12-01", catchUp: true },
+            { paidOn: "2026-12-01", dueDate: "2027-01-01", catchUp: false },
         ]);
     });
 
@@ -49,7 +49,7 @@ describe("the renewal rules (pure)", () => {
     });
 
     it("'I restarted' starts a new streak on that date, paid since then", () => {
-        expect(planRenewal(base, { missed: "restarted", restartDate: "2026-12-10" })).toEqual({ cycles: [{ dueDate: "2027-01-10", catchUp: false }], newStartDate: "2026-12-10" });
+        expect(planRenewal(base, { missed: "restarted", restartDate: "2026-12-10" })).toEqual({ cycles: [{ paidOn: "2026-12-10", dueDate: "2027-01-10", catchUp: false }], newStartDate: "2026-12-10" });
         const sinceOctober = planRenewal(base, { missed: "restarted", restartDate: "2026-10-15" });
         expect(dues(sinceOctober)).toEqual(["2026-11-15", "2026-12-15", "2027-01-15"]);
         expect(sinceOctober.newStartDate).toBe("2026-10-15");

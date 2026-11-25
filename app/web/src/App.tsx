@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router'
 import { PublicOnly, RequireAuth } from './auth/RouteGuards'
 import AddSubscription from './pages/AddSubscription'
@@ -6,6 +7,10 @@ import Home from './pages/Home'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import SubscriptionDetail from './pages/SubscriptionDetail'
+
+// The spending page carries the chart library (most of the app's size), so it is downloaded only
+// when someone opens it.
+const Analytics = lazy(() => import('./pages/Analytics'))
 
 function App() {
   return (
@@ -20,6 +25,7 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/subscriptions/new" element={<AddSubscription />} />
         <Route path="/subscriptions/:id" element={<SubscriptionDetail />} />
+        <Route path="/analytics" element={<Suspense fallback={<p className="muted">Loading…</p>}><Analytics /></Suspense>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

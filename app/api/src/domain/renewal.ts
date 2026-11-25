@@ -53,7 +53,8 @@ export interface RenewalPlan {
     // The new paid cycles, oldest first; the last one is the next renewal. `catchUp` cycles pay
     // for renewals missed in between: they keep the old cost, payment method and period. Only the
     // newest cycle uses what the user changed (it applies going forward).
-    cycles: Array<{ dueDate: string; catchUp: boolean }>;
+    // `paidOn` is the day the payment was made (the renewal date it paid on).
+    cycles: Array<{ paidOn: string; dueDate: string; catchUp: boolean }>;
     // Set when the user restarted: the new active streak's start (BR-013).
     newStartDate?: string;
 }
@@ -93,7 +94,7 @@ export function planRenewal(s: RenewalState, choice: RenewalChoice, newPeriod?: 
         // The restart is the new plan: every cycle since then uses the new values and period.
         const paid = datesUpTo(choice.restartDate, next, s.today);
         if (paid.length > MAX_PAYMENTS_PER_RENEWAL) throw new RenewalRefused("invalid", "The restart date is too long ago", "restartDate");
-        return { cycles: paid.map((d) => ({ dueDate: addBillingPeriod(d, next), catchUp: false })), newStartDate: choice.restartDate };
+        return { cycles: paid.map((d) => ({ paidOn: d, dueDate: addBillingPeriod(d, next), catchUp: false })), newStartDate: choice.restartDate };
     }
 
     if (info.missedDates.length > 1 && choice.missed !== "paid_all") {
@@ -107,7 +108,7 @@ export function planRenewal(s: RenewalState, choice: RenewalChoice, newPeriod?: 
     const paidOn = info.missedDates.length > 0 ? info.missedDates : [s.currentDue];
     return {
         cycles: paidOn.map((d, i) =>
-            i < paidOn.length - 1 ? { dueDate: addBillingPeriod(d, period), catchUp: true } : { dueDate: addBillingPeriod(d, next), catchUp: false },
+            i < paidOn.length - 1 ? { paidOn: d, dueDate: addBillingPeriod(d, period), catchUp: true } : { paidOn: d, dueDate: addBillingPeriod(d, next), catchUp: false },
         ),
     };
 }

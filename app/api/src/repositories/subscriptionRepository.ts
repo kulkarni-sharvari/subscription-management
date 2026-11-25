@@ -218,9 +218,10 @@ export function createSubscriptionRepository(pool: pg.Pool) {
 
                 await client.query(
                     `INSERT INTO billing
-                       (subscription_id, user_id, amount, payment_method_id, status, due_date, created_by, request_id)
-                     VALUES ($1, $2, $3, $4, 'paid', $5, 'user', $6)`,
-                    [created.id, userId, input.cost.toFixed(2), input.paymentMethodId, cycle.dueDate, cycle.requestId],
+                       (subscription_id, user_id, amount, payment_method_id, status, due_date, paid_on, created_by, request_id)
+                     VALUES ($1, $2, $3, $4, 'paid', $5, $6, 'user', $7)`,
+                    // The first payment is made on the start date.
+                    [created.id, userId, input.cost.toFixed(2), input.paymentMethodId, cycle.dueDate, input.startDate, cycle.requestId],
                 );
 
                 return {
@@ -377,13 +378,13 @@ export function createSubscriptionRepository(pool: pg.Pool) {
                 // second request that carries a different key.
                 for (const [i, cycle] of plan.cycles.entries()) {
                     await client.query(
-                        `INSERT INTO billing (subscription_id, user_id, amount, payment_method_id, status, due_date, created_by, request_id, idempotency_key)
-                         VALUES ($1, $2, $3, $4, 'paid', $5, 'user', $6, $7)`,
+                        `INSERT INTO billing (subscription_id, user_id, amount, payment_method_id, status, due_date, paid_on, created_by, request_id, idempotency_key)
+                         VALUES ($1, $2, $3, $4, 'paid', $5, $6, 'user', $7, $8)`,
                         [
                             id, userId,
                             cycle.catchUp ? sub.price : price,
                             cycle.catchUp ? sub.payment_method_id : paymentMethodId,
-                            cycle.dueDate, ctx.requestId, i === 0 ? ctx.idempotencyKey : null,
+                            cycle.dueDate, cycle.paidOn, ctx.requestId, i === 0 ? ctx.idempotencyKey : null,
                         ],
                     );
                 }

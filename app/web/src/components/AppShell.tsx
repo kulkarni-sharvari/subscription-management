@@ -8,9 +8,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <>
       <header className="app-header">
-        <Link to="/" className="font-semibold">
-          Subscription Manager
-        </Link>
+        <nav className="flex items-center gap-6" aria-label="Main">
+          <Link to="/" className="font-semibold">
+            Subscription Manager
+          </Link>
+          <Link to="/analytics" className="link">
+            Spending
+          </Link>
+        </nav>
         <div className="flex items-center gap-4">
           <span className="muted">{user?.email}</span>
           <button type="button" className="btn-secondary" onClick={() => void logout()}>

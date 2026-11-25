@@ -57,8 +57,8 @@ export async function addSubscription(
 }
 
 export const BILLING_SQL = `
-  INSERT INTO billing (subscription_id, user_id, amount, payment_method_id, due_date, created_by, request_id)
-  VALUES ($1, $2, $3, $4, $5, 'user', $6) RETURNING transaction_id`;
+  INSERT INTO billing (subscription_id, user_id, amount, payment_method_id, due_date, paid_on, created_by, request_id)
+  VALUES ($1, $2, $3, $4, $5, ($5::date - interval '1 month')::date, 'user', $6) RETURNING transaction_id`;
 
 export async function addBilling(db: Db, userId: string, subscriptionId: string, paymentMethodId: string, dueDate = "2026-02-28"): Promise<string> {
     return withUserContext(db.app, userId, async (c) => {

@@ -18,6 +18,8 @@ import type { AuthService } from "./services/authService.js";
 import type { PaymentMethodService } from "./services/paymentMethodService.js";
 import type { ProfileService } from "./services/profileService.js";
 import type { SubscriptionService } from "./services/subscriptionService.js";
+import type { AnalyticsRepository } from "./repositories/analyticsRepository.js";
+import { createAnalyticsRouter } from "./routes/analytics.js";
 import type { SessionCookies } from "./session/cookies.js";
 
 export interface AppDeps {
@@ -29,6 +31,8 @@ export interface AppDeps {
     profileService: ProfileService;
     paymentMethodService: PaymentMethodService;
     subscriptionService: SubscriptionService;
+    // Story 9: read-only spending analytics.
+    analytics: Pick<AnalyticsRepository, "spending">;
     limiters: RateLimiters;
     // Reverse proxies in front of the API (0 = none); decides which address counts as the client.
     trustProxyHops: number;
@@ -45,6 +49,7 @@ export function createApp({
     profileService,
     paymentMethodService,
     subscriptionService,
+    analytics,
     limiters,
     trustProxyHops,
     internalJobs,
@@ -91,6 +96,7 @@ export function createApp({
     api.use("/me", createMeRouter(profileService, limiters));
     api.use("/payment-methods", createPaymentMethodsRouter(paymentMethodService, limiters));
     api.use("/subscriptions", createSubscriptionsRouter(subscriptionService, limiters));
+    api.use("/analytics", createAnalyticsRouter(analytics, limiters));
     // The job routes sit before the user router and outside it: no cookie, no CSRF check, only the secret.
     app.use("/api/v1/internal/jobs", createInternalJobsRouter({ ...internalJobs, limiters }));
     app.use("/api/v1", api);

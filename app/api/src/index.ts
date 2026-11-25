@@ -1,6 +1,7 @@
 // Server bootstrap: load config, open the database pool, start listening.
 // Everything else lives in app.ts so it can be tested without opening a port.
 import { createApp } from "./app.js";
+import { createAnalyticsRepository } from "./repositories/analyticsRepository.js";
 import { loadEnv } from "./config/env.js";
 import { createPool } from "./db/pool.js";
 import { createAuth, createTokenVerifier } from "./middleware/auth.js";
@@ -54,6 +55,7 @@ const app = createApp({
         subscriptions: createSubscriptionRepository(pool),
         notifications,
     }),
+    analytics: createAnalyticsRepository(pool),
     limiters: createRateLimiters(),
     trustProxyHops: env.TRUST_PROXY_HOPS,
     internalJobs: {

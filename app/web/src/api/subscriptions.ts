@@ -109,6 +109,24 @@ export interface SubscriptionEdit {
 export const updateSubscription = (id: string, body: SubscriptionEdit) =>
   api.patch<SubscriptionDetail>(`/subscriptions/${encodeURIComponent(id)}`, body)
 
+// Story 9: spending analytics for a date range (both days included).
+export interface SpendingReport {
+  range: { from: string; to: string }
+  paid: {
+    total: number
+    payments: number
+    byCategory: Array<{ category: string; total: number; payments: number }>
+    byMonth: Array<{ month: string; total: number }>
+    recurring: { total: number; payments: number }
+    oneTime: { total: number; payments: number }
+  }
+  monthlyCost: { total: number; subscriptions: number; byCategory: Array<{ category: string; monthly: number }> }
+  statusCounts: { active: number; activeUnknown: number; inactive: number }
+  pendingReconciliation: Array<{ id: string; name: string; category: string; renewalDate: string | null; monthlyCost: number }>
+}
+export const getSpending = (from: string, to: string) =>
+  api.get<SpendingReport>(`/analytics/spending?${new URLSearchParams({ from, to })}`)
+
 // No body: the API records the cancellation date itself.
 export const cancelSubscription = (id: string) => api.post<SubscriptionDetail>(`/subscriptions/${encodeURIComponent(id)}/cancel`)
 // `key` is one UUID per renewal attempt, reused on a retry, so a double submit records once (SEC-041).

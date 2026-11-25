@@ -7,6 +7,7 @@ import { AuthProvider } from './auth/AuthProvider'
 import { AuthContext, type AuthState } from './auth/auth-context'
 import Home from './pages/Home'
 import SubscriptionDetail from './pages/SubscriptionDetail'
+import Analytics from './pages/Analytics'
 
 const EVIL = '<img src=x onerror="window.__pwned=1">'
 const ID = '3f1c2b7e-8a53-4e0f-9d52-6b7c1f2a9e10'
@@ -436,6 +437,88 @@ describe('Story 8: editing details in place', () => {
     show(`/subscriptions/${ID}`)
     await openEditor()
     expect(screen.queryByLabelText('Billing period')).toBeNull()
+  })
+})
+
+describe('Story 9: the spending page', () => {
+  const report = (over: Record<string, unknown> = {}) => ({
+    range: { from: '2025-11-24', to: '2026-11-23' },
+    paid: {
+      total: 241.27,
+      payments: 7,
+      byCategory: [
+        { category: EVIL, total: 120.97, payments: 4 },
+        { category: 'Utilities', total: 120.3, payments: 3 },
+      ],
+      byMonth: [
+        { month: '2026-10', total: 145.78 },
+        { month: '2026-11', total: 95.49 },
+      ],
+      recurring: { total: 161.27, payments: 6 },
+      oneTime: { total: 80, payments: 1 },
+    },
+    monthlyCost: { total: 35.59, subscriptions: 4, byCategory: [{ category: 'Entertainment', monthly: 15.49 }] },
+    statusCounts: { active: 5, activeUnknown: 1, inactive: 1 },
+    pendingReconciliation: [{ id: ID, name: 'Gym', category: 'Health', renewalDate: '2026-11-01', monthlyCost: 30 }],
+    ...over,
+  })
+  function showAnalytics(body: object) {
+    // jsdom has no ResizeObserver; the charts' responsive container needs one to exist.
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+    const calls = fakeApi(body)
+    const view = render(
+      <AuthContext.Provider value={auth}>
+        <MemoryRouter initialEntries={['/analytics']}>
+          <Routes>
+            <Route path="/analytics" element={<Analytics />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    )
+    return { calls, ...view }
+  }
+
+  it('shows the totals, the monthly cost and what is pending, with a link to each pending subscription', async () => {
+    showAnalytics(report())
+    expect(await screen.findByText('$241.27')).toBeTruthy()
+    expect(screen.getByText('$35.59')).toBeTruthy()
+    expect(screen.getByText('$161.27')).toBeTruthy()
+    expect(screen.getByText('$80.00')).toBeTruthy()
+    expect(screen.getByText(/Pending reconciliation: not included in the monthly cost/)).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Gym' }).getAttribute('href')).toBe(`/subscriptions/${ID}`)
+  })
+
+  it('asks for the last 12 months by default, with both dates', async () => {
+    const { calls } = showAnalytics(report())
+    await screen.findByText('$241.27')
+    expect(calls[0]).toMatch(/^\/api\/v1\/analytics\/spending\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('SEC-036: a category containing markup is shown as text in the table view', async () => {
+    const { container } = showAnalytics(report())
+    await screen.findByText('$241.27')
+    expect(screen.getAllByText(EVIL).length).toBeGreaterThan(0)
+    expect(container.querySelector('img')).toBeNull()
+    expect((window as { __pwned?: number }).__pwned).toBeUndefined()
+  })
+
+  it('SEC-038: an impossible custom range is explained and not sent', async () => {
+    const { calls } = showAnalytics(report())
+    await screen.findByText('$241.27')
+    const before = calls.length
+    fireEvent.change(screen.getByLabelText('Period'), { target: { value: 'custom' } })
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-12-01' } })
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-11-01' } })
+    expect(await screen.findByText('The start date must be on or before the end date')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2019-01-01' } })
+    expect(await screen.findByText('The range can be at most 5 years')).toBeTruthy()
+    // Only the valid "custom" starting range may have been requested, never the broken ones.
+    expect(calls.slice(before).some((url) => url.includes('from=2026-12-01') || url.includes('from=2019-01-01'))).toBe(false)
+  })
+
+  it('a period with no payments says so instead of drawing empty charts', async () => {
+    showAnalytics(report({ paid: { total: 0, payments: 0, byCategory: [], byMonth: [], recurring: { total: 0, payments: 0 }, oneTime: { total: 0, payments: 0 } } }))
+    expect(await screen.findByText('No payments in this period.')).toBeTruthy()
   })
 })
 
