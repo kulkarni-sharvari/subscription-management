@@ -4,6 +4,7 @@ export interface User {
   id: string
   email: string
   timeZone: string
+  monthlySummary: boolean
   createdAt: string
 }
 

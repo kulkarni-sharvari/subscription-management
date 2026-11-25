@@ -1,5 +1,5 @@
 import type pg from "pg";
-import { renewalDigestEmail, subscriptionCancelledEmail, subscriptionRenewedEmail, subscriptionsAddedEmail, type DigestItem, type OverdueItem } from "../email/templates.js";
+import { monthlySummaryEmail, renewalDigestEmail, subscriptionCancelledEmail, subscriptionRenewedEmail, subscriptionsAddedEmail, type DigestItem, type OverdueItem } from "../email/templates.js";
 import { reserveEmailSlot } from "../repositories/notificationLogRepository.js";
 import type { ProfileRepository } from "../repositories/profileRepository.js";
 import type { SubscriptionDetail } from "../repositories/subscriptionRepository.js";
@@ -65,6 +65,27 @@ export function createNotificationService(deps: {
         ): Promise<"sent" | "capped"> {
             if (!(await reserveEmailSlot(client, recipient.userId, EMAIL_DAILY_CAP))) return "capped";
             await deps.email.send({ to: recipient.email, ...renewalDigestEmail(items, overdue) });
+            return "sent";
+        },
+
+        // The monthly summary (Story 10), inside the monthly job's transaction like the digest.
+        // List-Unsubscribe and List-Unsubscribe-Post give mail apps a one-click unsubscribe button
+        // (RFC 8058): the app POSTs to the API link, which is signed for this user only.
+        async monthlySummary(
+            client: pg.PoolClient,
+            recipient: { userId: string; email: string },
+            content: Parameters<typeof monthlySummaryEmail>,
+            oneClickUnsubscribeUrl: string,
+            // One per user and month: a retry of the same summary is delivered once.
+            idempotencyKey: string,
+        ): Promise<"sent" | "capped"> {
+            if (!(await reserveEmailSlot(client, recipient.userId, EMAIL_DAILY_CAP))) return "capped";
+            await deps.email.send({
+                to: recipient.email,
+                ...monthlySummaryEmail(...content),
+                headers: { "List-Unsubscribe": `<${oneClickUnsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+                idempotencyKey,
+            });
             return "sent";
         },
     };

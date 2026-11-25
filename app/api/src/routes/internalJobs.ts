@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { SendMonthlySummaryJob } from "../jobs/sendMonthlySummary.js";
 import type { SendRemindersJob } from "../jobs/sendReminders.js";
 import type { TransitionOverdueJob } from "../jobs/transitionOverdue.js";
 import { NotFoundError } from "../errors.js";
@@ -12,6 +13,7 @@ export function createInternalJobsRouter(deps: {
     secret: string;
     sendReminders: Pick<SendRemindersJob, "run">;
     transitionOverdue: Pick<TransitionOverdueJob, "run">;
+    sendMonthlySummary: Pick<SendMonthlySummaryJob, "run">;
     limiters: RateLimiters;
 }) {
     const router = Router();
@@ -26,6 +28,11 @@ export function createInternalJobsRouter(deps: {
     // Story 5: lapse subscriptions whose renewal date has ended with no outcome recorded.
     router.post("/transition-overdue", async (_req, res) => {
         res.json(await deps.transitionOverdue.run());
+    });
+
+    // Story 10: the monthly summary, on the 1st of each user's month.
+    router.post("/send-monthly-summary", async (_req, res) => {
+        res.json(await deps.sendMonthlySummary.run());
     });
 
     // An unknown job, after a correct secret, is a 404 here rather than falling through to the user routes.

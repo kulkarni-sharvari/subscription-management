@@ -5,6 +5,7 @@ import { createAnalyticsRepository } from "./repositories/analyticsRepository.js
 import { loadEnv } from "./config/env.js";
 import { createPool } from "./db/pool.js";
 import { createAuth, createTokenVerifier } from "./middleware/auth.js";
+import { createSendMonthlySummaryJob } from "./jobs/sendMonthlySummary.js";
 import { createSendRemindersJob } from "./jobs/sendReminders.js";
 import { createTransitionOverdueJob } from "./jobs/transitionOverdue.js";
 import { createSessionCookies } from "./session/cookies.js";
@@ -62,7 +63,9 @@ const app = createApp({
         secret: env.INTERNAL_JOB_SECRET,
         sendReminders: createSendRemindersJob({ pool: jobPool, notifications }),
         transitionOverdue: createTransitionOverdueJob({ pool: jobPool }),
+        sendMonthlySummary: createSendMonthlySummaryJob({ pool: jobPool, notifications, appUrl: env.CORS_ORIGIN, linkSecret: env.EMAIL_LINK_SECRET }),
     },
+    emailLinkSecret: env.EMAIL_LINK_SECRET,
 });
 
 const server = app.listen(env.PORT, () => {

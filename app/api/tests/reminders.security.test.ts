@@ -167,11 +167,11 @@ describe("PATCH /me: the user's time zone", () => {
             .send(JSON.stringify(body));
 
     it("stores a real zone", async () => {
-        const { app, setTimeZone } = buildTestApp({ keys });
+        const { app, updateProfile } = buildTestApp({ keys });
         const res = await patch(app, { timeZone: "Asia/Kolkata" });
         expect(res.status).toBe(200);
         expect(res.body.timeZone).toBe("Asia/Kolkata");
-        expect(setTimeZone).toHaveBeenCalledWith(expect.any(String), "Asia/Kolkata");
+        expect(updateProfile).toHaveBeenCalledWith(expect.any(String), { timeZone: "Asia/Kolkata" });
     });
 
     it.each([
@@ -187,17 +187,17 @@ describe("PATCH /me: the user's time zone", () => {
         { timeZone: "UTC", id: "someone-else" },
         "UTC",
     ])("SEC-030: rejects %j with 400 and stores nothing", async (body) => {
-        const { app, setTimeZone } = buildTestApp({ keys });
+        const { app, updateProfile } = buildTestApp({ keys });
         expect((await patch(app, body)).status).toBe(400);
-        expect(setTimeZone).not.toHaveBeenCalled();
+        expect(updateProfile).not.toHaveBeenCalled();
     });
 
     it("SEC-021: needs the same-origin check and a session", async () => {
-        const { app, setTimeZone } = buildTestApp({ keys });
+        const { app, updateProfile } = buildTestApp({ keys });
         expect((await patch(app, { timeZone: "UTC" }, "https://evil.example")).status).toBe(403);
         const anonymous = await supertest(app).patch("/api/v1/me").set("Origin", ORIGIN).send({ timeZone: "UTC" });
         expect(anonymous.status).toBe(401);
-        expect(setTimeZone).not.toHaveBeenCalled();
+        expect(updateProfile).not.toHaveBeenCalled();
     });
 });
 
@@ -438,13 +438,15 @@ describe.skipIf(!local)("Story 4 against the database", () => {
             }
         };
 
-        it("the job role reads across users, but only the columns the reminder job needs", async () => {
+        it("the job role reads across users, but only the columns the jobs need", async () => {
             expect(await jobError("SELECT id, email, time_zone FROM profiles")).toBeNull();
             expect(await jobError("SELECT s.name, s.renewal_link FROM subscriptions s")).toBeNull();
             expect(await jobError("SELECT created_at FROM profiles")).toMatch(/permission denied/);
             expect(await jobError("SELECT cancellation_link FROM subscriptions")).toMatch(/permission denied/);
-            expect(await jobError("SELECT category FROM subscriptions")).toMatch(/permission denied/);
-            expect(await jobError("SELECT amount FROM billing")).toMatch(/permission denied/);
+            // Story 10's monthly summary reads category, amount and paid_on (migration 009); not the creator or request id.
+            expect(await jobError("SELECT category FROM subscriptions")).toBeNull();
+            expect(await jobError("SELECT amount, paid_on FROM billing")).toBeNull();
+            expect(await jobError("SELECT request_id FROM billing")).toMatch(/permission denied/);
         });
 
         it.each([

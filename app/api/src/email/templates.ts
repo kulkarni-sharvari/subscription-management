@@ -1,3 +1,4 @@
+import type { SpendingReport } from "../repositories/analyticsRepository.js";
 import type { SubscriptionDetail } from "../repositories/subscriptionRepository.js";
 
 // Makes text safe to place inside HTML. Every value that came from a user goes through this
@@ -196,3 +197,68 @@ export function subscriptionCancelledEmail(sub: SubscriptionDetail): EmailConten
     return { subject, html, text };
 }
 
+
+// The monthly summary (Story 10, FR-052): last month's payments and today's monthly cost, from the
+// same figures as the Spending page. Only numbers, category names and subscription names: no
+// payment details. The unsubscribe link goes to a page with a button, never a GET that changes
+// anything (mail scanners open links). Every user value is escaped (SEC-047).
+export function monthlySummaryEmail(
+    report: SpendingReport,
+    monthName: string,
+    links: { spending: string; unsubscribe: string },
+): EmailContent {
+    const subject = `Your subscriptions in ${monthName}`;
+    const { paid, monthlyCost, statusCounts, pendingReconciliation } = report;
+    const sections: Array<{ heading: string; intro?: string; rows: Array<[string, string]> }> = [
+        {
+            heading: `Paid in ${monthName}`,
+            rows: [
+                ["Total", `${paid.total.toFixed(2)} (${count(paid.payments, "payment", "payments")})`],
+                ["Recurring", paid.recurring.total.toFixed(2)],
+                ["One-time", paid.oneTime.total.toFixed(2)],
+            ],
+        },
+        {
+            heading: "Monthly cost now",
+            intro: "Active recurring subscriptions, each converted to a monthly amount.",
+            rows: [
+                ["Total", `${monthlyCost.total.toFixed(2)} a month (${count(monthlyCost.subscriptions, "subscription", "subscriptions")})`],
+                ...monthlyCost.byCategory.slice(0, MAX_LISTED).map((c): [string, string] => [c.category, c.monthly.toFixed(2)]),
+            ],
+        },
+        {
+            heading: "Subscriptions by status",
+            rows: [
+                ["Active", String(statusCounts.active)],
+                ["Needs action", String(statusCounts.activeUnknown)],
+                ["Inactive", String(statusCounts.inactive)],
+            ],
+        },
+    ];
+    if (pendingReconciliation.length > 0) {
+        sections.push({
+            heading: "Needs action (not in the monthly cost)",
+            intro: "The renewal date passed and you have not recorded whether you renewed or cancelled.",
+            rows: pendingReconciliation
+                .slice(0, MAX_LISTED)
+                .map((p): [string, string] => [p.name, `renewal date ${p.renewalDate ?? "unknown"}, ${p.monthlyCost.toFixed(2)} a month if it renewed`]),
+        });
+    }
+    const footer = "You get this email on the 1st of each month. To stop it, use this link or turn it off in the app:";
+
+    const html =
+        sections.map((s) => `<h2>${escapeHtml(s.heading)}</h2>` + (s.intro ? `<p>${escapeHtml(s.intro)}</p>` : "") + htmlTable(s.rows)).join("") +
+        `<p><a href="${escapeHtml(links.spending)}">See your spending in the app</a></p>` +
+        `<p><small>${escapeHtml(footer)} <a href="${escapeHtml(links.unsubscribe)}">Unsubscribe</a></small></p>`;
+    const text = [
+        ...sections.flatMap((s) => ["", s.heading.toUpperCase(), ...(s.intro ? [s.intro] : []), ...s.rows.map(([label, value]) => `${label}: ${value}`)]),
+        "",
+        `See your spending in the app: ${links.spending}`,
+        "",
+        footer,
+        links.unsubscribe,
+    ]
+        .join("\n")
+        .trimStart();
+    return { subject, html, text };
+}

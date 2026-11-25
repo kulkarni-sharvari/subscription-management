@@ -27,7 +27,10 @@ const configSchema = z.object({
   // Shared secret Supabase Cron sends in X-Internal-Job-Secret (SEC-016): at least 32 random bytes,
   // which is 43 characters in base64url.
   INTERNAL_JOB_SECRET: z.string().min(43),
-});
+  // Signs the unsubscribe link in the monthly summary email (Story 10). At least 32 random bytes
+  // (43 characters in base64url), and different from INTERNAL_JOB_SECRET.
+  EMAIL_LINK_SECRET: z.string().min(43),
+}).refine((env) => env.EMAIL_LINK_SECRET !== env.INTERNAL_JOB_SECRET, { path: ["EMAIL_LINK_SECRET"] });
 
 export type Env = z.infer<typeof configSchema>;
 

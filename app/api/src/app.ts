@@ -9,9 +9,10 @@ import { requestId } from "./middleware/requestId.js";
 import { requireSameOrigin } from "./middleware/sameOrigin.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createInternalJobsRouter } from "./routes/internalJobs.js";
-import { createMeRouter } from "./routes/me.js";
+import { createMeRouter, createUnsubscribeRouter } from "./routes/me.js";
 import { createPaymentMethodsRouter } from "./routes/paymentMethods.js";
 import { createSubscriptionsRouter } from "./routes/subscriptions.js";
+import type { SendMonthlySummaryJob } from "./jobs/sendMonthlySummary.js";
 import type { SendRemindersJob } from "./jobs/sendReminders.js";
 import type { TransitionOverdueJob } from "./jobs/transitionOverdue.js";
 import type { AuthService } from "./services/authService.js";
@@ -37,7 +38,14 @@ export interface AppDeps {
     // Reverse proxies in front of the API (0 = none); decides which address counts as the client.
     trustProxyHops: number;
     // The scheduled jobs and the shared secret that guards them (routes/internalJobs.ts).
-    internalJobs: { secret: string; sendReminders: Pick<SendRemindersJob, "run">; transitionOverdue: Pick<TransitionOverdueJob, "run"> };
+    internalJobs: {
+        secret: string;
+        sendReminders: Pick<SendRemindersJob, "run">;
+        transitionOverdue: Pick<TransitionOverdueJob, "run">;
+        sendMonthlySummary: Pick<SendMonthlySummaryJob, "run">;
+    };
+    // Signs the unsubscribe link in the monthly summary (EMAIL_LINK_SECRET).
+    emailLinkSecret: string;
 }
 
 // Builds the Express app without starting it, so tests can drive it through supertest
@@ -53,6 +61,7 @@ export function createApp({
     limiters,
     trustProxyHops,
     internalJobs,
+    emailLinkSecret,
 }: AppDeps) {
     const app = express();
     // Rate limits are counted per client address. Behind a reverse proxy every request seems to come
@@ -99,6 +108,8 @@ export function createApp({
     api.use("/analytics", createAnalyticsRouter(analytics, limiters));
     // The job routes sit before the user router and outside it: no cookie, no CSRF check, only the secret.
     app.use("/api/v1/internal/jobs", createInternalJobsRouter({ ...internalJobs, limiters }));
+    // The unsubscribe link: also outside the user router (no session, no Origin), signed instead.
+    app.use("/api/v1/email", createUnsubscribeRouter(profileService, limiters, emailLinkSecret));
     app.use("/api/v1", api);
 
     // Anything that matched no route above becomes a 404 in the standard error envelope.

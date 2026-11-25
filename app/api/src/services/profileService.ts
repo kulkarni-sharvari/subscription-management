@@ -1,8 +1,8 @@
 import { NotFoundError } from "../errors.js";
-import type { ProfileRepository } from "../repositories/profileRepository.js";
+import type { ProfileRepository, ProfileSettings } from "../repositories/profileRepository.js";
 
 // Routes call services, never repositories (LLD import boundaries).
-export function createProfileService(profiles: Pick<ProfileRepository, "findById" | "setTimeZone">) {
+export function createProfileService(profiles: Pick<ProfileRepository, "findById" | "update">) {
     return {
         async getProfile(userId: string) {
             const profile = await profiles.findById(userId);
@@ -12,9 +12,9 @@ export function createProfileService(profiles: Pick<ProfileRepository, "findById
             return profile;
         },
 
-        // The zone name is validated by the route before it gets here.
-        async setTimeZone(userId: string, timeZone: string) {
-            const profile = await profiles.setTimeZone(userId, timeZone);
+        // The values are validated by the route before they get here.
+        async update(userId: string, settings: ProfileSettings) {
+            const profile = await profiles.update(userId, settings);
             if (!profile) throw new NotFoundError();
             return profile;
         },

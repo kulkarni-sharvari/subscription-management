@@ -8,6 +8,8 @@ import { AuthContext, type AuthState } from './auth/auth-context'
 import Home from './pages/Home'
 import SubscriptionDetail from './pages/SubscriptionDetail'
 import Analytics from './pages/Analytics'
+import Settings from './pages/Settings'
+import Unsubscribe from './pages/Unsubscribe'
 
 const EVIL = '<img src=x onerror="window.__pwned=1">'
 const ID = '3f1c2b7e-8a53-4e0f-9d52-6b7c1f2a9e10'
@@ -28,7 +30,7 @@ const item = (over: Record<string, unknown> = {}) => ({
 
 const auth: AuthState = {
   status: 'authenticated',
-  user: { id: 'u1', email: 'me@example.com', timeZone: 'UTC', createdAt: '2026-11-01' },
+  user: { id: 'u1', email: 'me@example.com', timeZone: 'UTC', monthlySummary: true, createdAt: '2026-11-01' },
   login: async () => {},
   register: async () => '',
   confirmEmail: async () => {},
@@ -519,6 +521,82 @@ describe('Story 9: the spending page', () => {
   it('a period with no payments says so instead of drawing empty charts', async () => {
     showAnalytics(report({ paid: { total: 0, payments: 0, byCategory: [], byMonth: [], recurring: { total: 0, payments: 0 }, oneTime: { total: 0, payments: 0 } } }))
     expect(await screen.findByText('No payments in this period.')).toBeTruthy()
+  })
+})
+
+describe('Story 10: the monthly summary setting and the unsubscribe page', () => {
+  // Records each request's method, address and body; answers with the profile as it now stands.
+  function fakeProfileApi(start = true, status = 200) {
+    let monthlySummary = start
+    const calls: Array<{ method: string; url: string; body?: unknown }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined
+        calls.push({ method: init?.method ?? 'GET', url, body })
+        if (status !== 200) return new Response(JSON.stringify({ error: { code: 'VALIDATION_ERROR', message: 'This unsubscribe link is not valid' } }), { status })
+        if (body?.monthlySummary !== undefined) monthlySummary = body.monthlySummary
+        return new Response(JSON.stringify({ id: 'me', email: 'me@example.com', timeZone: 'UTC', monthlySummary, createdAt: '', unsubscribed: true }), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }),
+    )
+    return calls
+  }
+  const page = (path: string, element: React.ReactNode, route: string) =>
+    render(
+      <AuthContext.Provider value={auth}>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path={route} element={element} />
+          </Routes>
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    )
+
+  it('the settings switch shows the stored choice and sends only that field', async () => {
+    const calls = fakeProfileApi(true)
+    page('/settings', <Settings />, '/settings')
+    const box = (await screen.findByLabelText(/Monthly summary/)) as HTMLInputElement
+    expect(box.checked).toBe(true)
+    fireEvent.click(box)
+    expect(await screen.findByText('You will no longer get the monthly summary.')).toBeTruthy()
+    expect(calls.filter((c) => c.method === 'PATCH')).toEqual([{ method: 'PATCH', url: '/api/v1/me', body: { monthlySummary: false } }])
+    expect(((await screen.findByLabelText(/Monthly summary/)) as HTMLInputElement).checked).toBe(false)
+  })
+
+  const U = '11111111-1111-4111-8111-111111111111'
+  const T = 'a'.repeat(43)
+
+  it('opening the unsubscribe link changes nothing; the button sends the signed link once, then it is gone from the address bar', async () => {
+    window.history.replaceState(null, '', `/unsubscribe?u=${U}&t=${T}&extra=1`)
+    const calls = fakeProfileApi()
+    page('/unsubscribe', <Unsubscribe />, '/unsubscribe')
+    const button = await screen.findByRole('button', { name: 'Unsubscribe' })
+    expect(calls).toEqual([])
+    expect(window.location.search).toBe('')
+    fireEvent.click(button)
+    expect(await screen.findByText(/You will no longer get the monthly summary/)).toBeTruthy()
+    // Only u and t are passed on, never anything else from the address bar.
+    expect(calls).toEqual([{ method: 'POST', url: `/api/v1/email/unsubscribe?u=${U}&t=${T}`, body: undefined }])
+  })
+
+  it('a link without its signature says so and offers no button', async () => {
+    window.history.replaceState(null, '', `/unsubscribe?u=${U}`)
+    const calls = fakeProfileApi()
+    page('/unsubscribe', <Unsubscribe />, '/unsubscribe')
+    expect(await screen.findByText('This unsubscribe link is not valid.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Unsubscribe' })).toBeNull()
+    expect(calls).toEqual([])
+  })
+
+  it('a link the API refuses shows its message', async () => {
+    window.history.replaceState(null, '', `/unsubscribe?u=${U}&t=${T}`)
+    fakeProfileApi(true, 400)
+    page('/unsubscribe', <Unsubscribe />, '/unsubscribe')
+    fireEvent.click(await screen.findByRole('button', { name: 'Unsubscribe' }))
+    expect(await screen.findByText('This unsubscribe link is not valid')).toBeTruthy()
   })
 })
 

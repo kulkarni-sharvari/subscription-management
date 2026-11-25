@@ -16,6 +16,10 @@ export interface RateLimitConfig {
     jobAuthFailures: { limit: number; windowMs: number };
     // GET /analytics/spending, per user: it aggregates the whole ledger (SEC-038, SEC-051).
     analytics: { limit: number; windowMs: number };
+    // Bad unsubscribe links (no session), per address. Only failures are counted: mail providers
+    // send real one-click requests for many users from a few shared addresses, and those must never
+    // be throttled; guessing a signature is what the limit slows down.
+    emailLinks: { limit: number; windowMs: number };
 }
 
 // Sized from a measurement against the real database, not guessed: one database round trip is
@@ -31,6 +35,7 @@ export const defaultRateLimits: RateLimitConfig = {
     session: { limit: 30, windowMs: 15 * MINUTE },
     jobAuthFailures: { limit: 5, windowMs: MINUTE },
     analytics: { limit: 20, windowMs: MINUTE },
+    emailLinks: { limit: 30, windowMs: 15 * MINUTE },
 };
 
 type Window = { limit: number; windowMs: number };
@@ -64,6 +69,7 @@ export function createRateLimiters(config: RateLimitConfig = defaultRateLimits) 
         session: limiter(config.session, byIp),
         jobAuthFailures: limiter(config.jobAuthFailures, byIp, { onlyFailures: true }),
         analytics: limiter(config.analytics, byUser),
+        emailLinks: limiter(config.emailLinks, byIp, { onlyFailures: true }),
     };
 }
 

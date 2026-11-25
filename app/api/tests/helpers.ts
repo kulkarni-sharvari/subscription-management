@@ -13,6 +13,7 @@ import { createSubscriptionRepository } from "../src/repositories/subscriptionRe
 import type { AuthService } from "../src/services/authService.js";
 import { createNotificationService, EMAIL_DAILY_CAP } from "../src/services/notificationService.js";
 import { withUserContext } from "../src/db/pool.js";
+import { createSendMonthlySummaryJob } from "../src/jobs/sendMonthlySummary.js";
 import { createSendRemindersJob } from "../src/jobs/sendReminders.js";
 import { createTransitionOverdueJob } from "../src/jobs/transitionOverdue.js";
 import { reserveEmailSlot } from "../src/repositories/notificationLogRepository.js";
@@ -85,11 +86,13 @@ export function createFakeAuthService(overrides: Partial<AuthService> = {}) {
 const unlimited = { limit: 1_000_000, windowMs: 60_000 };
 // Limits so high that tests never meet them by accident; rate-limit tests pass their own.
 export const NO_LIMITS: RateLimitConfig = {
-    perUser: unlimited, writes: unlimited, login: unlimited, register: unlimited, session: unlimited, jobAuthFailures: unlimited, analytics: unlimited,
+    perUser: unlimited, writes: unlimited, login: unlimited, register: unlimited, session: unlimited, jobAuthFailures: unlimited, analytics: unlimited, emailLinks: unlimited,
 };
 
 // A job secret for tests: 43 characters, like 32 random bytes in base64url.
 export const JOB_SECRET = "test-job-secret-0123456789abcdefghijklmnopq";
+// Signs unsubscribe links in tests (Story 10).
+export const EMAIL_LINK_SECRET = "test-email-link-secret-0123456789abcdefghij";
 
 interface BuildOptions {
     keys: TestKeys;
@@ -104,7 +107,10 @@ export function buildTestApp({ keys, production = false, authService, profileExi
     const cookies = createSessionCookies(production);
     const service = createFakeAuthService(authService);
     const getProfile = vi.fn(async (id: string) => ({ id, email: "me@example.com", timeZone: "UTC", createdAt: new Date("2026-01-01T00:00:00.000Z") }));
-    const setTimeZone = vi.fn(async (id: string, timeZone: string) => ({ id, email: "me@example.com", timeZone, createdAt: new Date("2026-01-01T00:00:00.000Z") }));
+    const updateProfile = vi.fn(async (id: string, settings: { timeZone?: string; monthlySummary?: boolean }) => ({
+        id, email: "me@example.com", timeZone: settings.timeZone ?? "UTC", monthlySummary: settings.monthlySummary ?? true, createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    }));
+    const sendMonthlySummary = { run: vi.fn(async () => ({ usersDue: 0, sent: 0, alreadySent: 0, nothingToReport: 0, capped: 0, failed: 0 })) };
     const sendReminders = { run: vi.fn(async () => ({ usersDue: 0, sent: 0, alreadySent: 0, notYetMorning: 0, capped: 0, failed: 0 })) };
     const transitionOverdue = { run: vi.fn(async () => ({ usersLapsed: 0, subscriptionsLapsed: 0, failed: 0 })) };
     const paymentMethodService = {
@@ -123,20 +129,21 @@ export function buildTestApp({ keys, production = false, authService, profileExi
         corsOrigin: ORIGIN,
         sessionCookies: cookies,
         authService: service,
-        profileService: { getProfile, setTimeZone },
+        profileService: { getProfile, update: updateProfile },
         paymentMethodService,
         subscriptionService,
         analytics: { spending: vi.fn(async () => ({}) as never) },
         limiters: createRateLimiters(limits),
         trustProxyHops: 0,
-        internalJobs: { secret: JOB_SECRET, sendReminders, transitionOverdue },
+        internalJobs: { secret: JOB_SECRET, sendReminders, transitionOverdue, sendMonthlySummary },
+        emailLinkSecret: EMAIL_LINK_SECRET,
         auth: createAuth({
             cookies,
             verifyToken: createTokenVerifier(SUPABASE_URL, keys.jwks),
             profileExists: profileExists ?? (async () => true),
         }),
     });
-    return { app, service, getProfile, setTimeZone, sendReminders, transitionOverdue, cookies, paymentMethodService, subscriptionService };
+    return { app, service, getProfile, updateProfile, sendReminders, transitionOverdue, sendMonthlySummary, cookies, paymentMethodService, subscriptionService };
 }
 
 // The same app, but with the real repositories and services on the local database. Only the
@@ -179,7 +186,9 @@ export function buildDbTestApp({
             secret: JOB_SECRET,
             sendReminders: createSendRemindersJob({ pool: db.job, notifications, now }),
             transitionOverdue: createTransitionOverdueJob({ pool: db.job, now }),
+            sendMonthlySummary: createSendMonthlySummaryJob({ pool: db.job, notifications, appUrl: ORIGIN, linkSecret: EMAIL_LINK_SECRET, now }),
         },
+        emailLinkSecret: EMAIL_LINK_SECRET,
         auth: createAuth({ cookies, verifyToken: createTokenVerifier(SUPABASE_URL, keys.jwks), profileExists: profiles.exists }),
     });
     return { app, email };

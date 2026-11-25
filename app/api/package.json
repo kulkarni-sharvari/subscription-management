@@ -9,7 +9,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "job:reminders": "node --env-file=.env -e \"fetch('http://localhost:' + (process.env.PORT || 4000) + '/api/v1/internal/jobs/send-reminders', { method: 'POST', headers: { 'X-Internal-Job-Secret': process.env.INTERNAL_JOB_SECRET } }).then(async (r) => console.log(r.status, await r.text()))\"",
-    "job:transition-overdue": "node --env-file=.env -e \"fetch('http://localhost:' + (process.env.PORT || 4000) + '/api/v1/internal/jobs/transition-overdue', { method: 'POST', headers: { 'X-Internal-Job-Secret': process.env.INTERNAL_JOB_SECRET } }).then(async (r) => console.log(r.status, await r.text()))\""
+    "job:transition-overdue": "node --env-file=.env -e \"fetch('http://localhost:' + (process.env.PORT || 4000) + '/api/v1/internal/jobs/transition-overdue', { method: 'POST', headers: { 'X-Internal-Job-Secret': process.env.INTERNAL_JOB_SECRET } }).then(async (r) => console.log(r.status, await r.text()))\"",
+    "job:monthly-summary": "node --env-file=.env -e \"fetch('http://localhost:' + (process.env.PORT || 4000) + '/api/v1/internal/jobs/send-monthly-summary', { method: 'POST', headers: { 'X-Internal-Job-Secret': process.env.INTERNAL_JOB_SECRET } }).then(async (r) => console.log(r.status, await r.text()))\""
   },
   "keywords": [],
   "author": "",

@@ -15,6 +15,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Link to="/analytics" className="link">
             Spending
           </Link>
+          <Link to="/settings" className="link">
+            Settings
+          </Link>
         </nav>
         <div className="flex items-center gap-4">
           <span className="muted">{user?.email}</span>
